@@ -32,7 +32,7 @@ PORT = int(os.getenv("PORT", "10000"))
 
 APPS_SCRIPT_TIMEOUT = 45
 
-BOT_VERSION = "18.0"
+BOT_VERSION = "19.0"
 
 
 # =========================================================
@@ -344,6 +344,15 @@ def parse_update(text):
 
             result["sub_error"] = value
 
+        elif key in (
+            "KETERANGAN",
+            "KETERANGAN LAPANGAN",
+            "CATATAN",
+            "CATATAN LAPANGAN",
+        ):
+
+            result["keterangan"] = value
+
     return result
 
 
@@ -367,8 +376,9 @@ async def start(
 
 <code>/update
 Track Id : SC1002373501
-Error Code : SURVEI
-Sub Error : Keterangan bebas</code>
+Error Code : PS
+Sub Error : SURVEI
+Keterangan : PELANGGAN MINTA JADWAL ULANG</code>
 
 📊 <b>Command:</b>
 
@@ -387,6 +397,9 @@ Sub Error : Keterangan bebas</code>
 • REGISTRASI
 • BUTUH EXPAND ODP
 • CANCEL
+
+📝 <b>Keterangan</b> digunakan untuk
+catatan / kondisi aktual dari tim lapangan.
 """
 
     await update.message.reply_text(
@@ -416,6 +429,7 @@ async def update_order(
     track_id = "-"
     error_code = "-"
     sub_error = "-"
+    keterangan = ""
 
     try:
 
@@ -458,6 +472,11 @@ async def update_order(
             "sub_error"
         )
 
+        keterangan = data.get(
+            "keterangan",
+            ""
+        )
+
         # -----------------------------------------------------
         # VALIDASI FORMAT
         # -----------------------------------------------------
@@ -481,8 +500,9 @@ Gunakan:
 
 <code>/update
 Track Id : XXXXX
-Error Code : SURVEI
-Sub Error : Keterangan</code>
+Error Code : PS
+Sub Error : SURVEI
+Keterangan : Catatan tim lapangan</code>
 """,
                 parse_mode="HTML",
             )
@@ -493,7 +513,7 @@ Sub Error : Keterangan</code>
         # VALIDASI ERROR CODE
         # -----------------------------------------------------
 
-        if sub_error.upper() not in VALID_ERROR_CODES:
+        if error_code.upper() not in VALID_ERROR_CODES:
 
             logger.warning(
                 "INVALID ERROR CODE | %s",
@@ -512,6 +532,21 @@ Sub Error : Keterangan</code>
             )
 
             return
+
+        # -----------------------------------------------------
+        # KETERANGAN
+        #
+        # OPTIONAL
+        #
+        # Jika kosong:
+        # Google Sheet Y tidak akan dihapus.
+        # -----------------------------------------------------
+
+        keterangan = (
+            str(keterangan).strip()
+            if keterangan is not None
+            else ""
+        )
 
         # -----------------------------------------------------
         # USER
@@ -541,10 +576,11 @@ Sub Error : Keterangan</code>
         # -----------------------------------------------------
 
         logger.info(
-            "UPDATE START | TRACK=%s | ERROR=%s | SUBERROR=%s | USER=%s",
+            "UPDATE START | TRACK=%s | ERROR=%s | SUBERROR=%s | KETERANGAN=%s | USER=%s",
             track_id,
             error_code,
             sub_error,
+            keterangan,
             updated_by,
         )
 
@@ -558,6 +594,12 @@ Sub Error : Keterangan</code>
 
         # -----------------------------------------------------
         # APPS SCRIPT
+        #
+        # MAPPING FINAL:
+        #
+        # error_code  -> ERROR CODE
+        # sub_error   -> SUBERROR / X
+        # keterangan  -> KETERANGAN / Y
         # -----------------------------------------------------
 
         result = await asyncio.to_thread(
@@ -565,8 +607,9 @@ Sub Error : Keterangan</code>
             {
                 "action": "update",
                 "track_id": track_id,
-                "error_code": sub_error,
-                "sub_error": error_code,
+                "error_code": error_code,
+                "sub_error": sub_error,
+                "keterangan": keterangan,
                 "user": updated_by,
             },
         )
@@ -621,10 +664,16 @@ Sub Error : Keterangan</code>
                 "-"
             )
 
+            new_keterangan = result.get(
+                "new_keterangan",
+                keterangan or "-"
+            )
+
         else:
 
             row = "-"
             processing_ms = "-"
+            new_keterangan = keterangan or "-"
 
         now = datetime.now().strftime(
             "%d-%m-%Y %H:%M:%S"
@@ -637,10 +686,13 @@ Sub Error : Keterangan</code>
             f"<code>{escape_html(track_id)}</code>\n\n"
 
             f"🔄 <b>Error Code</b>\n"
-            f"<b>{escape_html(sub_error)}</b>\n\n"
+            f"<b>{escape_html(error_code)}</b>\n\n"
 
             f"📝 <b>Sub Error</b>\n"
-            f"{escape_html(error_code)}\n\n"
+            f"{escape_html(sub_error)}\n\n"
+
+            f"📋 <b>Keterangan</b>\n"
+            f"{escape_html(new_keterangan)}\n\n"
 
             f"👤 <b>Oleh</b>\n"
             f"{escape_html(updated_by)}\n\n"
@@ -932,10 +984,6 @@ async def cek_perform(
             },
         )
 
-        # -----------------------------------------------------
-        # VALIDASI RESPONSE
-        # -----------------------------------------------------
-
         if not (
             isinstance(result, dict)
             and result.get("success") is True
@@ -958,10 +1006,6 @@ async def cek_perform(
 
             return
 
-        # -----------------------------------------------------
-        # DATA
-        # -----------------------------------------------------
-
         report_date = result.get(
             "report_date",
             "-"
@@ -972,19 +1016,21 @@ async def cek_perform(
             {}
         )
 
+        if not isinstance(total, dict):
+            total = {}
+
         type_totals = result.get(
             "type_totals",
             {}
         )
 
+        if not isinstance(type_totals, dict):
+            type_totals = {}
+
         sto_data = result.get(
             "sto",
             []
         )
-
-        # -----------------------------------------------------
-        # HEADER
-        # -----------------------------------------------------
 
         message = (
             f"📊 <b>REPORT PROGRES — "
@@ -1047,10 +1093,6 @@ async def cek_perform(
             f"{safe_number(type_totals.get('datin'))}\n"
         )
 
-        # -----------------------------------------------------
-        # STO
-        # -----------------------------------------------------
-
         if isinstance(sto_data, list):
 
             for sto in sto_data:
@@ -1064,13 +1106,6 @@ async def cek_perform(
                     "\n━━━━━━━━━━━━━━━\n\n"
                     + sto_report
                 )
-
-        # -----------------------------------------------------
-        # TELEGRAM MESSAGE LIMIT
-        #
-        # Telegram sekitar 4096 karakter.
-        # Kita pecah dengan aman jika diperlukan.
-        # -----------------------------------------------------
 
         max_length = 3900
 
@@ -1108,12 +1143,10 @@ async def cek_perform(
 
                     current += line
 
-
             if current:
                 chunks.append(
                     current
                 )
-
 
             for chunk in chunks:
 
@@ -1374,10 +1407,6 @@ def run_telegram_bot():
                 .build()
             )
 
-            # -------------------------------------------------
-            # COMMAND HANDLERS
-            # -------------------------------------------------
-
             application.add_handler(
                 CommandHandler(
                     "start",
@@ -1406,10 +1435,6 @@ def run_telegram_bot():
                 )
             )
 
-            # -------------------------------------------------
-            # DEBUG ALL INCOMING MESSAGE
-            # -------------------------------------------------
-
             application.add_handler(
                 MessageHandler(
                     filters.ALL,
@@ -1418,20 +1443,9 @@ def run_telegram_bot():
                 group=99,
             )
 
-            # -------------------------------------------------
-            # ERROR HANDLER
-            # -------------------------------------------------
-
             application.add_error_handler(
                 telegram_error_handler
             )
-
-            # -------------------------------------------------
-            # START POLLING
-            #
-            # BAGIAN INI DIPERTAHANKAN DARI VERSI
-            # YANG SUDAH BERHASIL DI RENDER.
-            # -------------------------------------------------
 
             logger.info(
                 "BOT READY — MULAI POLLING TELEGRAM"
@@ -1491,10 +1505,6 @@ def main():
         "========================================"
     )
 
-    # -----------------------------------------------------
-    # CHECK CONFIG
-    # -----------------------------------------------------
-
     if not check_config():
 
         logger.error(
@@ -1502,10 +1512,6 @@ def main():
         )
 
         raise SystemExit(1)
-
-    # -----------------------------------------------------
-    # FLASK BACKGROUND
-    # -----------------------------------------------------
 
     flask_thread = threading.Thread(
         target=run_flask,
@@ -1518,10 +1524,6 @@ def main():
     logger.info(
         "Flask health server started."
     )
-
-    # -----------------------------------------------------
-    # TELEGRAM = PROSES UTAMA
-    # -----------------------------------------------------
 
     run_telegram_bot()
 
