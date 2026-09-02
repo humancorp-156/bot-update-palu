@@ -493,7 +493,7 @@ Sub Error : Keterangan</code>
         # VALIDASI ERROR CODE
         # -----------------------------------------------------
 
-        if error_code not in VALID_ERROR_CODES:
+        if sub_error.upper() not in VALID_ERROR_CODES:
 
             logger.warning(
                 "INVALID ERROR CODE | %s",
@@ -565,8 +565,8 @@ Sub Error : Keterangan</code>
             {
                 "action": "update",
                 "track_id": track_id,
-                "error_code": error_code,
-                "sub_error": sub_error,
+                "error_code": sub_error,
+                "sub_error": error_code,
                 "user": updated_by,
             },
         )
@@ -637,10 +637,10 @@ Sub Error : Keterangan</code>
             f"<code>{escape_html(track_id)}</code>\n\n"
 
             f"🔄 <b>Error Code</b>\n"
-            f"<b>{escape_html(error_code)}</b>\n\n"
+            f"<b>{escape_html(sub_error)}</b>\n\n"
 
             f"📝 <b>Sub Error</b>\n"
-            f"{escape_html(sub_error)}\n\n"
+            f"{escape_html(error_code)}\n\n"
 
             f"👤 <b>Oleh</b>\n"
             f"{escape_html(updated_by)}\n\n"
