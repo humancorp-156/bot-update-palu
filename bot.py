@@ -1,12 +1,11 @@
 import os
 import re
-import json
 import logging
-from datetime import datetime
+import threading
+import requests
 
-import gspread
-from google.oauth2.service_account import Credentials
-from dotenv import load_dotenv
+from datetime import datetime
+from flask import Flask, jsonify
 
 from telegram import Update
 from telegram.ext import (
@@ -16,37 +15,20 @@ from telegram.ext import (
 )
 
 
-# ==========================================
-# LOAD CONFIG
-# ==========================================
-
-load_dotenv()
+# =========================================================
+# CONFIG
+# =========================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-WORKSHEET_NAME = os.getenv(
-    "WORKSHEET_NAME",
-    "SERVICE AREA PALU"
-)
+APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")
+API_KEY = os.getenv("API_KEY")
 
-ERROR_CODE_HEADER = os.getenv(
-    "ERROR_CODE_HEADER",
-    "SUBERROR"
-)
-
-SUB_ERROR_HEADER = os.getenv(
-    "SUB_ERROR_HEADER",
-    "KETERANGAN"
-)
-
-GOOGLE_CREDENTIALS_JSON = os.getenv(
-    "GOOGLE_CREDENTIALS_JSON"
-)
+PORT = int(os.getenv("PORT", "10000"))
 
 
-# ==========================================
+# =========================================================
 # LOGGING
-# ==========================================
+# =========================================================
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -56,9 +38,82 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ==========================================
+# =========================================================
+# FLASK WEB SERVER
+# =========================================================
+
+app = Flask(__name__)
+
+
+@app.route("/")
+def home():
+    return """
+    <html>
+    <head>
+        <title>Bot Update Order Palu</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding-top: 80px;
+                background: #f5f5f5;
+            }
+
+            .box {
+                background: white;
+                max-width: 500px;
+                margin: auto;
+                padding: 30px;
+                border-radius: 15px;
+                box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            }
+
+            h1 {
+                color: #222;
+            }
+
+            .status {
+                color: green;
+                font-weight: bold;
+            }
+        </style>
+    </head>
+
+    <body>
+
+        <div class="box">
+
+            <h1>🤖 Bot Update Order</h1>
+
+            <p>Service Area Palu</p>
+
+            <p class="status">
+                🟢 BOT ONLINE
+            </p>
+
+            <p>
+                Telegram bot sedang berjalan.
+            </p>
+
+        </div>
+
+    </body>
+    </html>
+    """
+
+
+@app.route("/health")
+def health():
+    return jsonify({
+        "status": "online",
+        "bot": "Bot Update Order Palu",
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+
+
+# =========================================================
 # VALID ERROR CODE
-# ==========================================
+# =========================================================
 
 VALID_ERROR_CODES = [
     "KENDALA TEKNIK",
@@ -74,103 +129,66 @@ VALID_ERROR_CODES = [
 ]
 
 
-# ==========================================
-# GOOGLE SHEETS
-# ==========================================
+# =========================================================
+# CHECK CONFIG
+# =========================================================
 
-def get_worksheet():
+def check_config():
 
-    if not GOOGLE_CREDENTIALS_JSON:
-        raise Exception(
-            "GOOGLE_CREDENTIALS_JSON belum diatur di Environment."
+    missing = []
+
+    if not BOT_TOKEN:
+        missing.append("BOT_TOKEN")
+
+    if not APPS_SCRIPT_URL:
+        missing.append("APPS_SCRIPT_URL")
+
+    if not API_KEY:
+        missing.append("API_KEY")
+
+    if missing:
+        logger.error(
+            "Environment variable belum lengkap: %s",
+            ", ".join(missing)
         )
+
+        return False
+
+    return True
+
+
+# =========================================================
+# CALL GOOGLE APPS SCRIPT
+# =========================================================
+
+def call_apps_script(payload):
+
+    if not APPS_SCRIPT_URL:
+        raise Exception("APPS_SCRIPT_URL belum diatur.")
+
+    payload["api_key"] = API_KEY
+
+    response = requests.post(
+        APPS_SCRIPT_URL,
+        json=payload,
+        timeout=30
+    )
+
+    response.raise_for_status()
 
     try:
+        return response.json()
 
-        credentials_info = json.loads(
-            GOOGLE_CREDENTIALS_JSON
-        )
-
-    except json.JSONDecodeError:
-
+    except Exception:
         raise Exception(
-            "GOOGLE_CREDENTIALS_JSON tidak valid."
+            "Response Apps Script bukan JSON:\n"
+            + response.text[:500]
         )
 
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
 
-    credentials = Credentials.from_service_account_info(
-        credentials_info,
-        scopes=scopes
-    )
-
-    gc = gspread.authorize(credentials)
-
-    spreadsheet = gc.open_by_key(
-        SPREADSHEET_ID
-    )
-
-    worksheet = spreadsheet.worksheet(
-        WORKSHEET_NAME
-    )
-
-    return spreadsheet, worksheet
-
-
-# ==========================================
-# CREATE LOG SHEET
-# ==========================================
-
-def get_log_sheet(spreadsheet):
-
-    try:
-
-        log_sheet = spreadsheet.worksheet(
-            "BOT_LOG"
-        )
-
-    except gspread.WorksheetNotFound:
-
-        log_sheet = spreadsheet.add_worksheet(
-            title="BOT_LOG",
-            rows=1000,
-            cols=10
-        )
-
-        log_sheet.append_row([
-            "TIMESTAMP",
-            "TRACK ID",
-            "ERROR CODE",
-            "SUB ERROR",
-            "OLEH"
-        ])
-
-    return log_sheet
-
-
-# ==========================================
-# FIND COLUMN
-# ==========================================
-
-def find_column(headers, column_name):
-
-    column_name = column_name.strip().upper()
-
-    for index, header in enumerate(headers):
-
-        if str(header).strip().upper() == column_name:
-
-            return index + 1
-
-    return None
-
-
-# ==========================================
+# =========================================================
 # PARSE UPDATE
-# ==========================================
+# =========================================================
 
 def parse_update(text):
 
@@ -208,9 +226,9 @@ def parse_update(text):
     return result
 
 
-# ==========================================
+# =========================================================
 # START
-# ==========================================
+# =========================================================
 
 async def start(
     update: Update,
@@ -219,21 +237,21 @@ async def start(
 
     message = """
 👋 *BOT UPDATE ORDER*
-Service Area Palu
+*Service Area Palu*
 
-📌 Cara menggunakan:
+📌 *Cara menggunakan:*
 
 /update
-TRACK ID : CONTOH_TRACK_ID
+TRACK ID : SC1002373501
 ERROR CODE : SURVEI
 SUB ERROR : Sudah dijadwalkan besok
 
-📊 Command:
+📊 *Command:*
 
-/cekperform - Cek performa
-/ranking - Ranking teknisi
+/cekperform
+/ranking
 
-📋 Error Code valid:
+📋 *Error Code valid:*
 
 • KENDALA TEKNIK
 • KENDALA PELANGGAN
@@ -253,214 +271,72 @@ SUB ERROR : Sudah dijadwalkan besok
     )
 
 
-# ==========================================
+# =========================================================
 # UPDATE ORDER
-# ==========================================
+# =========================================================
 
 async def update_order(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    user_message = update.message.text
-
-    text = re.sub(
-        r"^/update(@\w+)?",
-        "",
-        user_message,
-        flags=re.IGNORECASE
-    ).strip()
-
-    data = parse_update(text)
-
-    track_id = data.get("track_id")
-    error_code = data.get("error_code")
-    sub_error = data.get("sub_error")
-
-
-    # ======================================
-    # VALIDASI FORMAT
-    # ======================================
-
-    if not track_id or not error_code or not sub_error:
-
-        await update.message.reply_text(
-            "❌ Format tidak lengkap.\n\n"
-            "Gunakan:\n\n"
-            "/update\n"
-            "TRACK ID : XXXXX\n"
-            "ERROR CODE : SURVEI\n"
-            "SUB ERROR : Keterangan"
-        )
-
-        return
-
-
-    # ======================================
-    # VALIDASI ERROR CODE
-    # ======================================
-
-    if error_code not in VALID_ERROR_CODES:
-
-        error_list = "\n".join(
-            f"• {x}"
-            for x in VALID_ERROR_CODES
-        )
-
-        await update.message.reply_text(
-            "❌ ERROR CODE tidak valid.\n\n"
-            f"{error_list}"
-        )
-
-        return
-
-
     try:
 
-        await update.message.reply_text(
-            "🔎 Sedang mencari TRACK ID..."
-        )
+        user_message = update.message.text or ""
 
+        text = re.sub(
+            r"^/update(@\w+)?",
+            "",
+            user_message,
+            flags=re.IGNORECASE
+        ).strip()
 
-        # ==================================
-        # OPEN GOOGLE SHEET
-        # ==================================
+        data = parse_update(text)
 
-        spreadsheet, worksheet = get_worksheet()
+        track_id = data.get("track_id")
+        error_code = data.get("error_code")
+        sub_error = data.get("sub_error")
 
+        # =================================================
+        # VALIDASI FORMAT
+        # =================================================
 
-        # ==================================
-        # GET ALL DATA
-        # ==================================
-
-        all_values = worksheet.get_all_values()
-
-
-        if len(all_values) < 2:
+        if not track_id or not error_code or not sub_error:
 
             await update.message.reply_text(
-                "❌ Google Sheet tidak memiliki data."
+                "❌ *Format tidak lengkap.*\n\n"
+                "Gunakan:\n\n"
+                "/update\n"
+                "TRACK ID : XXXXX\n"
+                "ERROR CODE : SURVEI\n"
+                "SUB ERROR : Keterangan",
+                parse_mode="Markdown"
             )
 
             return
 
+        # =================================================
+        # VALIDASI ERROR CODE
+        # =================================================
 
-        headers = all_values[0]
+        if error_code not in VALID_ERROR_CODES:
 
-
-        # ==================================
-        # FIND COLUMNS
-        # ==================================
-
-        track_column = find_column(
-            headers,
-            "TRACK ID"
-        )
-
-        error_column = find_column(
-            headers,
-            ERROR_CODE_HEADER
-        )
-
-        sub_error_column = find_column(
-            headers,
-            SUB_ERROR_HEADER
-        )
-
-
-        if not track_column:
+            error_list = "\n".join(
+                f"• {x}"
+                for x in VALID_ERROR_CODES
+            )
 
             await update.message.reply_text(
-                "❌ Kolom TRACK ID tidak ditemukan."
+                "❌ *ERROR CODE tidak valid.*\n\n"
+                f"{error_list}",
+                parse_mode="Markdown"
             )
 
             return
 
-
-        if not error_column:
-
-            await update.message.reply_text(
-                f"❌ Kolom {ERROR_CODE_HEADER} "
-                "tidak ditemukan."
-            )
-
-            return
-
-
-        if not sub_error_column:
-
-            await update.message.reply_text(
-                f"❌ Kolom {SUB_ERROR_HEADER} "
-                "tidak ditemukan."
-            )
-
-            return
-
-
-        # ==================================
-        # SEARCH TRACK ID
-        # ==================================
-
-        found_row = None
-
-
-        for row_number, row in enumerate(
-            all_values[1:],
-            start=2
-        ):
-
-            if len(row) < track_column:
-                continue
-
-            sheet_track_id = str(
-                row[track_column - 1]
-            ).strip()
-
-
-            if (
-                sheet_track_id.upper()
-                == track_id.upper()
-            ):
-
-                found_row = row_number
-
-                break
-
-
-        # ==================================
-        # TRACK ID NOT FOUND
-        # ==================================
-
-        if not found_row:
-
-            await update.message.reply_text(
-                "❌ TRACK ID tidak ditemukan.\n\n"
-                f"📦 {track_id}"
-            )
-
-            return
-
-
-        # ==================================
-        # UPDATE GOOGLE SHEET
-        # ==================================
-
-        worksheet.update_cell(
-            found_row,
-            error_column,
-            error_code
-        )
-
-        worksheet.update_cell(
-            found_row,
-            sub_error_column,
-            sub_error
-        )
-
-
-        # ==================================
-        # USERNAME
-        # ==================================
+        # =================================================
+        # USER
+        # =================================================
 
         user = update.effective_user
 
@@ -470,48 +346,61 @@ async def update_order(
 
         else:
 
-            updated_by = user.full_name
+            updated_by = user.full_name or "Unknown User"
 
+        # =================================================
+        # PROCESS
+        # =================================================
 
-        # ==================================
-        # SAVE LOG
-        # ==================================
-
-        log_sheet = get_log_sheet(
-            spreadsheet
+        await update.message.reply_text(
+            "🔎 Sedang mencari TRACK ID..."
         )
+
+        result = call_apps_script({
+            "action": "update",
+            "track_id": track_id,
+            "error_code": error_code,
+            "sub_error": sub_error,
+            "user": updated_by
+        })
+
+        # =================================================
+        # RESULT
+        # =================================================
+
+        if not result.get("ok"):
+
+            error_message = result.get(
+                "error",
+                "Terjadi kesalahan."
+            )
+
+            await update.message.reply_text(
+                "❌ *Update gagal!*\n\n"
+                f"{error_message}",
+                parse_mode="Markdown"
+            )
+
+            return
 
         now = datetime.now().strftime(
             "%d-%m-%Y %H:%M:%S"
         )
 
-        log_sheet.append_row([
-            now,
-            track_id,
-            error_code,
-            sub_error,
-            updated_by
-        ])
-
-
-        # ==================================
-        # SUCCESS MESSAGE
-        # ==================================
-
         success_message = f"""
-✅ *Update berhasil!*
+✅ *UPDATE BERHASIL!*
 
-📦 TRACK ID
+📦 *TRACK ID*
 `{track_id}`
 
-🔄 Error Code
+🔄 *Error Code*
 *{error_code}*
 
-📝 Sub Error
-*{sub_error}*
+📝 *Sub Error*
+{escape_markdown(sub_error)}
 
-👤 Oleh
-{updated_by}
+👤 *Oleh*
+{escape_markdown(updated_by)}
 
 🕒 {now}
 """
@@ -521,23 +410,31 @@ async def update_order(
             parse_mode="Markdown"
         )
 
+    except requests.exceptions.Timeout:
+
+        logger.exception("Timeout Apps Script")
+
+        await update.message.reply_text(
+            "❌ Google Sheet terlalu lama merespons.\n\n"
+            "Silakan coba kembali beberapa saat lagi."
+        )
 
     except Exception as e:
 
         logger.exception(
-            "Terjadi error saat update order"
+            "Error update order"
         )
 
         await update.message.reply_text(
-            "❌ Terjadi error saat mengakses "
-            "Google Sheet.\n\n"
-            "Silakan hubungi PIC bot."
+            "❌ *Terjadi error pada bot.*\n\n"
+            "Silakan hubungi PIC bot.",
+            parse_mode="Markdown"
         )
 
 
-# ==========================================
+# =========================================================
 # CEK PERFORM
-# ==========================================
+# =========================================================
 
 async def cek_perform(
     update: Update,
@@ -550,66 +447,28 @@ async def cek_perform(
             "📊 Sedang mengambil data performa..."
         )
 
+        result = call_apps_script({
+            "action": "stats"
+        })
 
-        _, worksheet = get_worksheet()
-
-        all_values = worksheet.get_all_values()
-
-
-        if not all_values:
+        if not result.get("ok"):
 
             await update.message.reply_text(
-                "❌ Google Sheet kosong."
+                "❌ Gagal mengambil data performa.\n\n"
+                + result.get(
+                    "error",
+                    "Unknown error"
+                )
             )
 
             return
 
+        total = result.get("total", 0)
 
-        headers = all_values[0]
-
-
-        error_column = find_column(
-            headers,
-            ERROR_CODE_HEADER
+        stats = result.get(
+            "stats",
+            {}
         )
-
-
-        if not error_column:
-
-            await update.message.reply_text(
-                "❌ Kolom Error Code "
-                "tidak ditemukan."
-            )
-
-            return
-
-
-        counts = {}
-
-
-        for row in all_values[1:]:
-
-            if len(row) < error_column:
-                continue
-
-
-            status = row[
-                error_column - 1
-            ].strip().upper()
-
-
-            if not status:
-
-                status = "BELUM DIUPDATE"
-
-
-            counts[status] = (
-                counts.get(status, 0) + 1
-            )
-
-
-        total = len(all_values) - 1
-
 
         message = f"""
 📊 *DASHBOARD PERFORMA*
@@ -618,28 +477,33 @@ async def cek_perform(
 
 """
 
+        if stats:
 
-        for status, count in sorted(
-            counts.items(),
-            key=lambda x: x[1],
-            reverse=True
-        ):
-
-            message += (
-                f"• {status}: *{count}*\n"
+            sorted_stats = sorted(
+                stats.items(),
+                key=lambda x: x[1],
+                reverse=True
             )
 
+            for status, count in sorted_stats:
+
+                message += (
+                    f"• {status}: *{count}*\n"
+                )
+
+        else:
+
+            message += "Belum ada data."
 
         await update.message.reply_text(
             message,
             parse_mode="Markdown"
         )
 
-
     except Exception as e:
 
         logger.exception(
-            "Error saat cek performa"
+            "Error cek perform"
         )
 
         await update.message.reply_text(
@@ -647,9 +511,9 @@ async def cek_perform(
         )
 
 
-# ==========================================
+# =========================================================
 # RANKING
-# ==========================================
+# =========================================================
 
 async def ranking(
     update: Update,
@@ -662,97 +526,31 @@ async def ranking(
             "🏆 Sedang menghitung ranking..."
         )
 
+        result = call_apps_script({
+            "action": "ranking"
+        })
 
-        _, worksheet = get_worksheet()
-
-        data = worksheet.get_all_values()
-
-
-        if not data:
+        if not result.get("ok"):
 
             await update.message.reply_text(
-                "❌ Google Sheet kosong."
-            )
-
-            return
-
-
-        headers = data[0]
-
-
-        team_column = find_column(
-            headers,
-            "TEAM"
-        )
-
-        error_column = find_column(
-            headers,
-            ERROR_CODE_HEADER
-        )
-
-
-        if not team_column:
-
-            await update.message.reply_text(
-                "❌ Kolom TEAM tidak ditemukan."
-            )
-
-            return
-
-
-        if not error_column:
-
-            await update.message.reply_text(
-                "❌ Kolom Error Code "
-                "tidak ditemukan."
-            )
-
-            return
-
-
-        ranking_data = {}
-
-
-        for row in data[1:]:
-
-            if (
-                len(row) < team_column
-                or len(row) < error_column
-            ):
-
-                continue
-
-
-            team = row[
-                team_column - 1
-            ].strip()
-
-
-            status = row[
-                error_column - 1
-            ].strip().upper()
-
-
-            if team and status == "PS":
-
-                ranking_data[team] = (
-                    ranking_data.get(team, 0)
-                    + 1
+                "❌ Gagal mengambil ranking.\n\n"
+                + result.get(
+                    "error",
+                    "Unknown error"
                 )
+            )
 
+            return
 
-        sorted_ranking = sorted(
-            ranking_data.items(),
-            key=lambda x: x[1],
-            reverse=True
+        ranking_data = result.get(
+            "ranking",
+            []
         )
-
 
         message = """
 🏆 *RANKING PS TEKNISI*
 
 """
-
 
         medals = [
             "🥇",
@@ -760,42 +558,49 @@ async def ranking(
             "🥉"
         ]
 
-
-        for index, (team, total) in enumerate(
-            sorted_ranking,
-            start=1
-        ):
-
-            if index <= 3:
-
-                icon = medals[index - 1]
-
-            else:
-
-                icon = f"{index}."
-
-
-            message += (
-                f"{icon} *{team}* — "
-                f"{total} PS\n"
-            )
-
-
-        if not sorted_ranking:
+        if not ranking_data:
 
             message += "Belum ada data PS."
 
+        else:
+
+            for index, item in enumerate(
+                ranking_data,
+                start=1
+            ):
+
+                team = item.get(
+                    "team",
+                    "-"
+                )
+
+                total = item.get(
+                    "total",
+                    0
+                )
+
+                if index <= 3:
+
+                    icon = medals[index - 1]
+
+                else:
+
+                    icon = f"{index}."
+
+                message += (
+                    f"{icon} *{escape_markdown(str(team))}* "
+                    f"— *{total} PS*\n"
+                )
 
         await update.message.reply_text(
             message,
             parse_mode="Markdown"
         )
 
-
     except Exception as e:
 
         logger.exception(
-            "Error saat ranking"
+            "Error ranking"
         )
 
         await update.message.reply_text(
@@ -803,89 +608,160 @@ async def ranking(
         )
 
 
-# ==========================================
+# =========================================================
+# MARKDOWN ESCAPE
+# =========================================================
+
+def escape_markdown(text):
+
+    if text is None:
+        return ""
+
+    text = str(text)
+
+    characters = [
+        "_",
+        "*",
+        "[",
+        "]",
+        "(",
+        ")",
+        "~",
+        "`",
+        ">",
+        "#",
+        "+",
+        "-",
+        "=",
+        "|",
+        "{",
+        "}",
+        ".",
+        "!"
+    ]
+
+    for char in characters:
+
+        text = text.replace(
+            char,
+            "\\" + char
+        )
+
+    return text
+
+
+# =========================================================
+# RUN TELEGRAM BOT
+# =========================================================
+
+def run_bot():
+
+    try:
+
+        logger.info(
+            "Memulai Telegram Bot..."
+        )
+
+        application = (
+            ApplicationBuilder()
+            .token(BOT_TOKEN)
+            .build()
+        )
+
+        application.add_handler(
+            CommandHandler(
+                "start",
+                start
+            )
+        )
+
+        application.add_handler(
+            CommandHandler(
+                "update",
+                update_order
+            )
+        )
+
+        application.add_handler(
+            CommandHandler(
+                "cekperform",
+                cek_perform
+            )
+        )
+
+        application.add_handler(
+            CommandHandler(
+                "ranking",
+                ranking
+            )
+        )
+
+        logger.info(
+            "======================================"
+        )
+
+        logger.info(
+            "BOT UPDATE ORDER PALU AKTIF"
+        )
+
+        logger.info(
+            "======================================"
+        )
+
+        application.run_polling(
+            drop_pending_updates=True
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Telegram Bot berhenti karena error."
+        )
+
+
+# =========================================================
 # MAIN
-# ==========================================
+# =========================================================
 
 def main():
 
-    if not BOT_TOKEN:
+    if not check_config():
 
-        print(
-            "ERROR: BOT_TOKEN belum diisi!"
+        logger.error(
+            "Bot tidak dapat dijalankan."
         )
 
         return
 
+    # -----------------------------------------------
+    # Telegram bot berjalan di background
+    # -----------------------------------------------
 
-    if not SPREADSHEET_ID:
+    bot_thread = threading.Thread(
+        target=run_bot,
+        daemon=True
+    )
 
-        print(
-            "ERROR: SPREADSHEET_ID belum diisi!"
-        )
+    bot_thread.start()
 
-        return
+    # -----------------------------------------------
+    # Flask web server
+    # -----------------------------------------------
 
+    logger.info(
+        "Web server berjalan pada port %s",
+        PORT
+    )
 
-    if not GOOGLE_CREDENTIALS_JSON:
-
-        print(
-            "ERROR: GOOGLE_CREDENTIALS_JSON "
-            "belum diisi!"
-        )
-
-        return
-
-
-    application = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .build()
+    app.run(
+        host="0.0.0.0",
+        port=PORT
     )
 
 
-    application.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
-    )
-
-
-    application.add_handler(
-        CommandHandler(
-            "update",
-            update_order
-        )
-    )
-
-
-    application.add_handler(
-        CommandHandler(
-            "cekperform",
-            cek_perform
-        )
-    )
-
-
-    application.add_handler(
-        CommandHandler(
-            "ranking",
-            ranking
-        )
-    )
-
-
-    print("=" * 40)
-    print("BOT UPDATE ORDER AKTIF")
-    print("=" * 40)
-
-
-    application.run_polling(
-        drop_pending_updates=True
-    )
-
+# =========================================================
+# START
+# =========================================================
 
 if __name__ == "__main__":
-
     main()
