@@ -1055,15 +1055,15 @@ async def cek_perform(
 
             for sto in sto_data:
 
-    sto_report = format_sto_report(sto)
+                sto_report = format_sto_report(sto)
 
-    if not sto_report:
-        continue
+                if not sto_report:
+                    continue
 
-    message += (
-        "\n━━━━━━━━━━━━━━━\n\n"
-        + sto_report
-    )
+                message += (
+                    "\n━━━━━━━━━━━━━━━\n\n"
+                    + sto_report
+                )
 
         # -----------------------------------------------------
         # TELEGRAM MESSAGE LIMIT
