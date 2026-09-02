@@ -32,7 +32,7 @@ PORT = int(os.getenv("PORT", "10000"))
 
 APPS_SCRIPT_TIMEOUT = 45
 
-BOT_VERSION = "17.0"
+BOT_VERSION = "18.0"
 
 
 # =========================================================
@@ -730,6 +730,175 @@ Silakan coba kembali.
 
 
 # =========================================================
+# HELPER CEKPERFORM
+# =========================================================
+
+def safe_text(value):
+
+    if value is None:
+        return "-"
+
+    text = str(value).strip()
+
+    if not text:
+        return "-"
+
+    return escape_html(text)
+
+
+def safe_number(value):
+
+    if value is None:
+        return "0"
+
+    text = str(value).strip()
+
+    if not text:
+        return "0"
+
+    if text.startswith("#"):
+        return "-"
+
+    return escape_html(text)
+
+
+def safe_percentage(value):
+
+    if value is None:
+        return "-"
+
+    text = str(value).strip()
+
+    if not text:
+        return "-"
+
+    if text.startswith("#"):
+        return "-"
+
+    return escape_html(text)
+
+
+def product_total(order_data):
+
+    if not isinstance(order_data, dict):
+        return "0"
+
+    keys = [
+        "mo",
+        "pda",
+        "tsel",
+        "indibiz",
+        "datin",
+    ]
+
+    total = 0
+
+    for key in keys:
+
+        value = order_data.get(
+            key,
+            0
+        )
+
+        try:
+
+            number = float(
+                str(value)
+                .replace(",", ".")
+                .strip()
+            )
+
+            total += number
+
+        except Exception:
+
+            continue
+
+    if total == int(total):
+
+        return str(
+            int(total)
+        )
+
+    return str(total)
+
+
+def format_sto_report(sto):
+
+    if not isinstance(sto, dict):
+        return ""
+
+    name = safe_text(
+        sto.get("sto", "-")
+    )
+
+    order_total = product_total(
+        sto.get("order", {})
+    )
+
+    belum_survey = product_total(
+        sto.get("belum_survey", {})
+    )
+
+    survey = product_total(
+        sto.get("survey", {})
+    )
+
+    kendala_teknik = product_total(
+        sto.get("kendala_teknik", {})
+    )
+
+    kendala_non_teknik = product_total(
+        sto.get("kendala_non_teknik", {})
+    )
+
+    cancel = product_total(
+        sto.get("cancel", {})
+    )
+
+    penarikan = product_total(
+        sto.get("penarikan_instalasi", {})
+    )
+
+    aktivasi = product_total(
+        sto.get("aktivasi", {})
+    )
+
+    real_ps = product_total(
+        sto.get("real_ps", {})
+    )
+
+    estimasi_ps = product_total(
+        sto.get("estimasi_ps", {})
+    )
+
+    ps_re = safe_percentage(
+        sto.get("ps_re_tsel", "-")
+    )
+
+    fu_re = safe_percentage(
+        sto.get("fu_re_tsel", "-")
+    )
+
+    return (
+        f"<b>🏢 STO {name}</b>\n\n"
+
+        f"📦 Jumlah Order       : {order_total}\n"
+        f"🆕 Belum Survey       : {belum_survey}\n"
+        f"🔍 Survey             : {survey}\n"
+        f"⚠️ Kendala Teknik     : {kendala_teknik}\n"
+        f"🛠 Kendala Non Teknik : {kendala_non_teknik}\n"
+        f"❌ Cancel             : {cancel}\n"
+        f"🔌 Penarikan & Inst   : {penarikan}\n"
+        f"⚡ Aktivasi           : {aktivasi}\n"
+        f"✅ Real PS            : {real_ps}\n"
+        f"📐 Estimasi PS        : {estimasi_ps}\n"
+        f"📈 PS/RE TSEL         : {ps_re}\n"
+        f"📈 FU/RE TSEL         : {fu_re}\n"
+    )
+
+
+# =========================================================
 # /CEKPERFORM
 # =========================================================
 
@@ -743,6 +912,15 @@ async def cek_perform(
         if not update.message:
             return
 
+        logger.info(
+            "CEKPERFORM START | USER=%s",
+            (
+                update.effective_user.username
+                if update.effective_user
+                else "-"
+            ),
+        )
+
         await update.message.reply_text(
             "📊 Sedang mengambil data performa..."
         )
@@ -754,42 +932,246 @@ async def cek_perform(
             },
         )
 
+        # -----------------------------------------------------
+        # VALIDASI RESPONSE
+        # -----------------------------------------------------
+
         if not (
             isinstance(result, dict)
             and result.get("success") is True
         ):
 
-            message = (
+            error_message = (
                 result.get(
                     "message",
-                    "Gagal."
+                    "Gagal mengambil DASH PRESEN."
                 )
                 if isinstance(result, dict)
-                else "Gagal."
+                else "Gagal mengambil DASH PRESEN."
             )
 
             await update.message.reply_text(
-                "❌ " + escape_html(message),
+                "❌ <b>CEKPERFORM GAGAL</b>\n\n"
+                + escape_html(error_message),
                 parse_mode="HTML",
             )
 
             return
 
+        # -----------------------------------------------------
+        # DATA
+        # -----------------------------------------------------
+
+        report_date = result.get(
+            "report_date",
+            "-"
+        )
+
         total = result.get(
             "total",
-            result.get(
-                "total_rows",
-                0
-            ),
+            {}
         )
 
-        await update.message.reply_text(
-            "📊 <b>DASHBOARD PERFORMA</b>\n\n"
-            f"📦 Total Order: <b>{escape_html(total)}</b>",
-            parse_mode="HTML",
+        type_totals = result.get(
+            "type_totals",
+            {}
         )
 
-    except Exception:
+        sto_data = result.get(
+            "sto",
+            []
+        )
+
+        # -----------------------------------------------------
+        # HEADER
+        # -----------------------------------------------------
+
+        message = (
+            f"📊 <b>REPORT PROGRES — "
+            f"{safe_text(report_date)}</b>\n"
+            f"<i>(Total seluruh STO)</i>\n\n"
+
+            f"<b>📌 TOTAL</b>\n\n"
+
+            f"📦 Jumlah Order       : "
+            f"{safe_number(total.get('jumlah_order'))}\n"
+
+            f"🆕 Belum Survey       : "
+            f"{safe_number(total.get('belum_survey'))}\n"
+
+            f"🔍 Survey             : "
+            f"{safe_number(total.get('survey'))}\n"
+
+            f"⚠️ Kendala Teknik     : "
+            f"{safe_number(total.get('kendala_teknik'))}\n"
+
+            f"🛠 Kendala Non Teknik : "
+            f"{safe_number(total.get('kendala_non_teknik'))}\n"
+
+            f"❌ Cancel             : "
+            f"{safe_number(total.get('cancel'))}\n"
+
+            f"🔌 Penarikan & Inst   : "
+            f"{safe_number(total.get('penarikan_instalasi'))}\n"
+
+            f"⚡ Aktivasi           : "
+            f"{safe_number(total.get('aktivasi'))}\n"
+
+            f"✅ Real PS            : "
+            f"{safe_number(total.get('real_ps'))}\n"
+
+            f"📐 Estimasi PS        : "
+            f"{safe_number(total.get('estimasi_ps'))}\n"
+
+            f"📈 PS/RE TSEL (85%)   : "
+            f"{safe_percentage(total.get('ps_re_tsel'))}\n"
+
+            f"📈 FU/RE TSEL (90%)   : "
+            f"{safe_percentage(total.get('fu_re_tsel'))}\n\n"
+
+            f"📋 <b>Jumlah Order per Tipe (Total):</b>\n"
+
+            f"• MO       : "
+            f"{safe_number(type_totals.get('mo'))}\n"
+
+            f"• PDA      : "
+            f"{safe_number(type_totals.get('pda'))}\n"
+
+            f"• TSEL     : "
+            f"{safe_number(type_totals.get('tsel'))}\n"
+
+            f"• INDI BIZ : "
+            f"{safe_number(type_totals.get('indibiz'))}\n"
+
+            f"• DATIN    : "
+            f"{safe_number(type_totals.get('datin'))}\n"
+        )
+
+        # -----------------------------------------------------
+        # STO
+        # -----------------------------------------------------
+
+        if isinstance(sto_data, list):
+
+            for sto in sto_data:
+
+                sto_report =
+                    format_sto_report(sto)
+
+                if not sto_report:
+                    continue
+
+                message += (
+                    "\n━━━━━━━━━━━━━━━\n\n"
+                    + sto_report
+                )
+
+        # -----------------------------------------------------
+        # TELEGRAM MESSAGE LIMIT
+        #
+        # Telegram sekitar 4096 karakter.
+        # Kita pecah dengan aman jika diperlukan.
+        # -----------------------------------------------------
+
+        max_length = 3900
+
+        if len(message) <= max_length:
+
+            await update.message.reply_text(
+                message,
+                parse_mode="HTML",
+            )
+
+        else:
+
+            chunks = []
+
+            current = ""
+
+            for line in message.splitlines(
+                keepends=True
+            ):
+
+                if (
+                    len(current) +
+                    len(line)
+                    > max_length
+                ):
+
+                    if current:
+                        chunks.append(
+                            current
+                        )
+
+                    current = line
+
+                else:
+
+                    current += line
+
+
+            if current:
+                chunks.append(
+                    current
+                )
+
+
+            for chunk in chunks:
+
+                await update.message.reply_text(
+                    chunk,
+                    parse_mode="HTML",
+                )
+
+        logger.info(
+            "CEKPERFORM SUCCESS | DATE=%s | STO=%s",
+            report_date,
+            len(sto_data)
+            if isinstance(sto_data, list)
+            else 0,
+        )
+
+    except requests.exceptions.Timeout:
+
+        logger.error(
+            "CEKPERFORM APPS SCRIPT TIMEOUT"
+        )
+
+        try:
+
+            await update.message.reply_text(
+                "❌ <b>DASH PRESEN terlalu lama merespons.</b>\n\n"
+                "Silakan coba lagi.",
+                parse_mode="HTML",
+            )
+
+        except Exception:
+
+            logger.exception(
+                "FAILED SEND CEKPERFORM TIMEOUT"
+            )
+
+    except requests.exceptions.RequestException as e:
+
+        logger.error(
+            "CEKPERFORM REQUEST ERROR | %s",
+            e,
+        )
+
+        try:
+
+            await update.message.reply_text(
+                "❌ <b>Gagal terhubung ke Google Sheet.</b>",
+                parse_mode="HTML",
+            )
+
+        except Exception:
+
+            logger.exception(
+                "FAILED SEND CEKPERFORM REQUEST ERROR"
+            )
+
+    except Exception as e:
 
         logger.exception(
             "CEKPERFORM ERROR"
@@ -798,7 +1180,9 @@ async def cek_perform(
         try:
 
             await update.message.reply_text(
-                "❌ Gagal mengambil data performa."
+                "❌ <b>Gagal mengambil data performa.</b>\n\n"
+                + escape_html(str(e)),
+                parse_mode="HTML",
             )
 
         except Exception:
@@ -984,13 +1368,6 @@ def run_telegram_bot():
 
         try:
 
-            # -------------------------------------------------
-            # BUILD APPLICATION
-            #
-            # Sengaja dibuat sederhana agar kompatibel
-            # dengan berbagai versi python-telegram-bot.
-            # -------------------------------------------------
-
             application = (
                 ApplicationBuilder()
                 .token(BOT_TOKEN)
@@ -1053,13 +1430,8 @@ def run_telegram_bot():
             # -------------------------------------------------
             # START POLLING
             #
-            # Tidak menggunakan:
-            # get_updates_timeout()
-            # get_updates_connect_timeout()
-            # get_updates_read_timeout()
-            # get_updates_write_timeout()
-            #
-            # supaya tidak terkena perbedaan API versi library.
+            # BAGIAN INI DIPERTAHANKAN DARI VERSI
+            # YANG SUDAH BERHASIL DI RENDER.
             # -------------------------------------------------
 
             logger.info(
@@ -1133,7 +1505,7 @@ def main():
         raise SystemExit(1)
 
     # -----------------------------------------------------
-    # FLASK AS BACKGROUND THREAD
+    # FLASK BACKGROUND
     # -----------------------------------------------------
 
     flask_thread = threading.Thread(
@@ -1156,7 +1528,7 @@ def main():
 
 
 # =========================================================
-# START APPLICATION
+# START
 # =========================================================
 
 if __name__ == "__main__":
