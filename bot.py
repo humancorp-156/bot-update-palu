@@ -25,10 +25,10 @@ API_KEY = os.getenv("API_KEY")
 
 PORT = int(os.getenv("PORT", "10000"))
 
-# Jangan terlalu lama menunggu Google Apps Script
-APPS_SCRIPT_TIMEOUT = 30
+# Google Apps Script timeout
+APPS_SCRIPT_TIMEOUT = 45
 
-BOT_VERSION = "11.0"
+BOT_VERSION = "14.0"
 
 # =========================================================
 # LOGGING
@@ -86,7 +86,7 @@ def home():
             <p>Service Area Palu</p>
             <p class="status">🟢 BOT ONLINE</p>
             <p>Telegram bot sedang berjalan.</p>
-            <p>Version: 11.0</p>
+            <p>Version: 14.0</p>
         </div>
     </body>
     </html>
@@ -192,13 +192,20 @@ def check_config():
 # =========================================================
 
 def call_apps_script(payload):
+
     if not APPS_SCRIPT_URL:
-        raise Exception("APPS_SCRIPT_URL belum diatur.")
+        raise Exception(
+            "APPS_SCRIPT_URL belum diatur."
+        )
 
     request_payload = dict(payload)
+
     request_payload["api_key"] = API_KEY
 
-    action = request_payload.get("action", "-")
+    action = request_payload.get(
+        "action",
+        "-"
+    )
 
     logger.info(
         "Mengirim request Apps Script | action=%s",
@@ -208,6 +215,7 @@ def call_apps_script(payload):
     start_time = datetime.now()
 
     try:
+
         response = requests.post(
             APPS_SCRIPT_URL,
             json=request_payload,
@@ -226,12 +234,16 @@ def call_apps_script(payload):
         response.raise_for_status()
 
         try:
+
             result = response.json()
+
         except Exception:
+
             logger.error(
-                "Apps Script mengirim response bukan JSON: %s",
+                "Response Apps Script bukan JSON: %s",
                 response.text[:500],
             )
+
             raise Exception(
                 "Response Google Apps Script bukan JSON."
             )
@@ -244,17 +256,21 @@ def call_apps_script(payload):
         return result
 
     except requests.exceptions.Timeout:
+
         logger.error(
             "Apps Script TIMEOUT setelah %s detik",
             APPS_SCRIPT_TIMEOUT,
         )
+
         raise
 
     except requests.exceptions.RequestException as e:
+
         logger.error(
             "Request Apps Script gagal: %s",
             e,
         )
+
         raise
 
 
@@ -263,9 +279,11 @@ def call_apps_script(payload):
 # =========================================================
 
 def parse_update(text):
+
     result = {}
 
     for line in text.splitlines():
+
         line = line.strip()
 
         if not line:
@@ -274,18 +292,28 @@ def parse_update(text):
         if ":" not in line:
             continue
 
-        key, value = line.split(":", 1)
+        key, value = line.split(
+            ":",
+            1
+        )
 
         key = key.strip().upper()
         value = value.strip()
 
         if key == "TRACK ID":
+
             result["track_id"] = value
 
         elif key == "ERROR CODE":
+
             result["error_code"] = value.upper()
 
-        elif key in ("SUB ERROR", "SUBERROR"):
+        elif key in (
+            "SUB ERROR",
+            "SUBERROR",
+            "SUB-ERROR"
+        ):
+
             result["sub_error"] = value
 
     return result
@@ -295,7 +323,11 @@ def parse_update(text):
 # START
 # =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     message = """
 👋 *BOT UPDATE ORDER*
 *Service Area Palu*
@@ -340,8 +372,16 @@ async def update_order(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+
+    track_id = "-"
+    error_code = "-"
+    sub_error = "-"
+
     try:
-        user_message = update.message.text or ""
+
+        user_message = (
+            update.message.text or ""
+        )
 
         text = re.sub(
             r"^/update(@\w+)?",
@@ -352,15 +392,28 @@ async def update_order(
 
         data = parse_update(text)
 
-        track_id = data.get("track_id")
-        error_code = data.get("error_code")
-        sub_error = data.get("sub_error")
+        track_id = data.get(
+            "track_id"
+        )
+
+        error_code = data.get(
+            "error_code"
+        )
+
+        sub_error = data.get(
+            "sub_error"
+        )
 
         # -------------------------------------------------
         # VALIDASI
         # -------------------------------------------------
 
-        if not track_id or not error_code or not sub_error:
+        if (
+            not track_id
+            or not error_code
+            or not sub_error
+        ):
+
             await update.message.reply_text(
                 "❌ *Format tidak lengkap.*\n\n"
                 "Gunakan:\n\n"
@@ -370,11 +423,15 @@ async def update_order(
                 "SUB ERROR : Keterangan",
                 parse_mode="Markdown",
             )
+
             return
 
+
         if error_code not in VALID_ERROR_CODES:
+
             error_list = "\n".join(
-                f"• {x}" for x in VALID_ERROR_CODES
+                f"• {x}"
+                for x in VALID_ERROR_CODES
             )
 
             await update.message.reply_text(
@@ -382,7 +439,9 @@ async def update_order(
                 + error_list,
                 parse_mode="Markdown",
             )
+
             return
+
 
         # -------------------------------------------------
         # USER
@@ -391,11 +450,24 @@ async def update_order(
         user = update.effective_user
 
         if user and user.username:
-            updated_by = f"@{user.username}"
+
+            updated_by = (
+                f"@{user.username}"
+            )
+
         elif user:
-            updated_by = user.full_name or "Unknown User"
+
+            updated_by = (
+                user.full_name
+                or "Unknown User"
+            )
+
         else:
-            updated_by = "Unknown User"
+
+            updated_by = (
+                "Unknown User"
+            )
+
 
         # -------------------------------------------------
         # STATUS
@@ -405,6 +477,7 @@ async def update_order(
             "🔎 Sedang mencari TRACK ID..."
         )
 
+
         logger.info(
             "UPDATE START | TRACK=%s | ERROR=%s | SUBERROR=%s | USER=%s",
             track_id,
@@ -413,20 +486,29 @@ async def update_order(
             updated_by,
         )
 
+
         # -------------------------------------------------
         # CALL APPS SCRIPT
+        #
+        # IMPORTANT:
+        # requests dijalankan di thread
+        # supaya Telegram tidak ikut macet.
         # -------------------------------------------------
 
-        result = call_apps_script({
-            "action": "update",
-            "track_id": track_id,
-            "error_code": error_code,
-            "sub_error": sub_error,
-            "user": updated_by,
-        })
+        result = await asyncio.to_thread(
+            call_apps_script,
+            {
+                "action": "update",
+                "track_id": track_id,
+                "error_code": error_code,
+                "sub_error": sub_error,
+                "user": updated_by,
+            }
+        )
+
 
         # -------------------------------------------------
-        # CEK RESPONSE
+        # RESPONSE
         # -------------------------------------------------
 
         success = bool(
@@ -434,25 +516,35 @@ async def update_order(
             and result.get("success") is True
         )
 
+
         logger.info(
             "UPDATE RESULT | success=%r | result=%r",
             success,
             result,
         )
 
+
         # -------------------------------------------------
         # GAGAL
         # -------------------------------------------------
 
         if not success:
-            error_message = "Terjadi kesalahan pada Google Sheet."
 
-            if isinstance(result, dict):
+            error_message = (
+                "Terjadi kesalahan pada Google Sheet."
+            )
+
+            if isinstance(
+                result,
+                dict
+            ):
+
                 error_message = (
                     result.get("message")
                     or result.get("error")
                     or error_message
                 )
+
 
             logger.error(
                 "UPDATE GAGAL | TRACK=%s | MESSAGE=%s",
@@ -460,49 +552,82 @@ async def update_order(
                 error_message,
             )
 
+
             await update.message.reply_text(
                 "❌ *UPDATE GAGAL!*\n\n"
-                + escape_markdown(error_message),
+                + escape_markdown(
+                    error_message
+                ),
                 parse_mode="Markdown",
             )
 
             return
+
 
         # -------------------------------------------------
         # SUCCESS
         # -------------------------------------------------
 
         processing_ms = (
-            result.get("processing_ms", "-")
-            if isinstance(result, dict)
+            result.get(
+                "processing_ms",
+                "-"
+            )
+            if isinstance(
+                result,
+                dict
+            )
             else "-"
         )
 
+
         row = (
-            result.get("row", "-")
-            if isinstance(result, dict)
+            result.get(
+                "row",
+                "-"
+            )
+            if isinstance(
+                result,
+                dict
+            )
             else "-"
         )
+
 
         now = datetime.now().strftime(
             "%d-%m-%Y %H:%M:%S"
         )
 
+
         success_message = (
             "✅ *UPDATE BERHASIL!*\n\n"
-            f"📦 *TRACK ID*\n`{escape_markdown(track_id)}`\n\n"
-            f"🔄 *Error Code*\n*{escape_markdown(error_code)}*\n\n"
-            f"📝 *Sub Error*\n{escape_markdown(sub_error)}\n\n"
-            f"👤 *Oleh*\n{escape_markdown(updated_by)}\n\n"
+
+            f"📦 *TRACK ID*\n"
+            f"`{escape_markdown(track_id)}`\n\n"
+
+            f"🔄 *Error Code*\n"
+            f"*{escape_markdown(error_code)}*\n\n"
+
+            f"📝 *Sub Error*\n"
+            f"{escape_markdown(sub_error)}\n\n"
+
+            f"👤 *Oleh*\n"
+            f"{escape_markdown(updated_by)}\n\n"
+
             f"📍 *Row:* {row}\n"
+
             f"🕒 {now}\n"
-            f"⚡ Proses: *{processing_ms} ms*"
+
+            f"⚡ Proses: "
+            f"*{processing_ms} ms*"
         )
+
 
         await update.message.reply_text(
             success_message,
             parse_mode="Markdown",
         )
+
 
         logger.info(
             "UPDATE BERHASIL | TRACK=%s | ROW=%s | PROCESS=%s ms",
@@ -511,23 +636,29 @@ async def update_order(
             processing_ms,
         )
 
+
     except requests.exceptions.Timeout:
+
         logger.error(
             "UPDATE TIMEOUT | TRACK=%s",
-            locals().get("track_id", "-"),
+            track_id,
         )
+
 
         await update.message.reply_text(
             "❌ *Google Sheet terlalu lama merespons.*\n\n"
-            "Silakan coba kembali beberapa saat lagi.",
+            "Silakan coba kembali.",
             parse_mode="Markdown",
         )
 
+
     except requests.exceptions.RequestException as e:
+
         logger.error(
             "UPDATE REQUEST ERROR | %s",
             e,
         )
+
 
         await update.message.reply_text(
             "❌ *Gagal terhubung ke Google Sheet.*\n\n"
@@ -535,10 +666,13 @@ async def update_order(
             parse_mode="Markdown",
         )
 
+
     except Exception as e:
+
         logger.exception(
-            "UPDATE ERROR",
+            "UPDATE ERROR"
         )
+
 
         await update.message.reply_text(
             "❌ *Terjadi error pada bot.*\n\n"
@@ -555,73 +689,84 @@ async def cek_perform(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+
     try:
+
         await update.message.reply_text(
             "📊 Sedang mengambil data performa..."
         )
 
-        result = call_apps_script({
-            "action": "stats",
-        })
+
+        result = await asyncio.to_thread(
+            call_apps_script,
+            {
+                "action": "stats",
+            }
+        )
+
 
         success = bool(
             isinstance(result, dict)
             and result.get("success") is True
         )
 
-        if not success:
-            error_message = "Unknown error"
 
-            if isinstance(result, dict):
+        if not success:
+
+            error_message = (
+                "Unknown error"
+            )
+
+            if isinstance(
+                result,
+                dict
+            ):
+
                 error_message = (
                     result.get("message")
                     or result.get("error")
                     or error_message
                 )
 
+
             await update.message.reply_text(
                 "❌ *Gagal mengambil data performa.*\n\n"
-                + escape_markdown(error_message),
+                + escape_markdown(
+                    error_message
+                ),
                 parse_mode="Markdown",
             )
+
             return
 
-        total = result.get("total", 0)
-        stats = result.get("stats", {})
 
-        message = (
-            "📊 *DASHBOARD PERFORMA*\n\n"
-            f"📦 Total Order: *{total}*\n\n"
+        total = result.get(
+            "total",
+            result.get(
+                "total_rows",
+                0
+            )
         )
 
-        if stats:
-            sorted_stats = sorted(
-                stats.items(),
-                key=lambda x: x[1],
-                reverse=True,
-            )
-
-            for status, count in sorted_stats:
-                message += (
-                    f"• {escape_markdown(str(status))}: "
-                    f"*{count}*\n"
-                )
-        else:
-            message += "Belum ada data."
 
         await update.message.reply_text(
-            message,
+            "📊 *DASHBOARD PERFORMA*\n\n"
+            f"📦 Total Order: *{total}*",
             parse_mode="Markdown",
         )
 
+
     except Exception as e:
+
         logger.exception(
             "CEK PERFORM ERROR"
         )
 
         await update.message.reply_text(
             "❌ *Gagal mengambil data performa.*\n\n"
-            + escape_markdown(str(e)),
+            + escape_markdown(
+                str(e)
+            ),
             parse_mode="Markdown",
         )
 
@@ -634,43 +779,67 @@ async def ranking(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+
     try:
+
         await update.message.reply_text(
             "🏆 Sedang menghitung ranking..."
         )
 
-        result = call_apps_script({
-            "action": "ranking",
-        })
+
+        result = await asyncio.to_thread(
+            call_apps_script,
+            {
+                "action": "ranking",
+            }
+        )
+
 
         success = bool(
             isinstance(result, dict)
             and result.get("success") is True
         )
 
-        if not success:
-            error_message = "Unknown error"
 
-            if isinstance(result, dict):
+        if not success:
+
+            error_message = (
+                "Unknown error"
+            )
+
+            if isinstance(
+                result,
+                dict
+            ):
+
                 error_message = (
                     result.get("message")
                     or result.get("error")
                     or error_message
                 )
 
+
             await update.message.reply_text(
                 "❌ *Gagal mengambil ranking.*\n\n"
-                + escape_markdown(error_message),
+                + escape_markdown(
+                    error_message
+                ),
                 parse_mode="Markdown",
             )
+
             return
+
 
         ranking_data = result.get(
             "ranking",
-            [],
+            []
         )
 
-        message = "🏆 *RANKING PS TEKNISI*\n\n"
+
+        message = (
+            "🏆 *RANKING PS TEKNISI*\n\n"
+        )
+
 
         medals = [
             "🥇",
@@ -678,28 +847,43 @@ async def ranking(
             "🥉",
         ]
 
+
         if not ranking_data:
-            message += "Belum ada data PS."
+
+            message += (
+                "Belum ada data PS."
+            )
 
         else:
+
             for index, item in enumerate(
                 ranking_data,
                 start=1,
             ):
+
                 team = item.get(
                     "team",
-                    "-",
+                    "-"
                 )
 
                 total = item.get(
                     "total",
-                    0,
+                    0
                 )
 
+
                 if index <= 3:
-                    icon = medals[index - 1]
+
+                    icon = (
+                        medals[index - 1]
+                    )
+
                 else:
-                    icon = f"{index}."
+
+                    icon = (
+                        f"{index}."
+                    )
+
 
                 message += (
                     f"{icon} "
@@ -707,19 +891,24 @@ async def ranking(
                     f"— *{total} PS*\n"
                 )
 
+
         await update.message.reply_text(
             message,
             parse_mode="Markdown",
         )
 
+
     except Exception as e:
+
         logger.exception(
             "RANKING ERROR"
         )
 
         await update.message.reply_text(
             "❌ *Gagal menghitung ranking.*\n\n"
-            + escape_markdown(str(e)),
+            + escape_markdown(
+                str(e)
+            ),
             parse_mode="Markdown",
         )
 
@@ -729,6 +918,7 @@ async def ranking(
 # =========================================================
 
 def run_bot():
+
     logger.info(
         "========================================"
     )
@@ -746,9 +936,15 @@ def run_bot():
         "========================================"
     )
 
+
     try:
+
         loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+
+        asyncio.set_event_loop(
+            loop
+        )
+
 
         application = (
             ApplicationBuilder()
@@ -756,9 +952,6 @@ def run_bot():
             .build()
         )
 
-        # ---------------------------------------------
-        # HANDLERS
-        # ---------------------------------------------
 
         application.add_handler(
             CommandHandler(
@@ -767,12 +960,14 @@ def run_bot():
             )
         )
 
+
         application.add_handler(
             CommandHandler(
                 "update",
                 update_order,
             )
         )
+
 
         application.add_handler(
             CommandHandler(
@@ -781,12 +976,14 @@ def run_bot():
             )
         )
 
+
         application.add_handler(
             CommandHandler(
                 "ranking",
                 ranking,
             )
         )
+
 
         logger.info(
             "Telegram handlers berhasil dibuat."
@@ -796,16 +993,15 @@ def run_bot():
             "BOT SIAP MENERIMA PESAN."
         )
 
-        # ---------------------------------------------
-        # POLLING
-        # ---------------------------------------------
 
         application.run_polling(
             drop_pending_updates=True,
             stop_signals=None,
         )
 
+
     except Exception:
+
         logger.exception(
             "Telegram Bot berhenti karena error."
         )
@@ -816,15 +1012,15 @@ def run_bot():
 # =========================================================
 
 def main():
+
     if not check_config():
+
         logger.error(
             "Bot tidak dapat dijalankan karena config tidak lengkap."
         )
+
         return
 
-    # ---------------------------------------------
-    # START TELEGRAM THREAD
-    # ---------------------------------------------
 
     bot_thread = threading.Thread(
         target=run_bot,
@@ -832,16 +1028,15 @@ def main():
         daemon=True,
     )
 
+
     bot_thread.start()
 
-    # ---------------------------------------------
-    # FLASK
-    # ---------------------------------------------
 
     logger.info(
         "Web server berjalan pada port %s",
         PORT,
     )
+
 
     app.run(
         host="0.0.0.0",
@@ -856,4 +1051,5 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
+
     main()
