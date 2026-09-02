@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import logging
 import threading
 import requests
@@ -47,11 +48,20 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
+
     return """
+    <!DOCTYPE html>
     <html>
+
     <head>
+
         <title>Bot Update Order Palu</title>
+
+        <meta name="viewport"
+              content="width=device-width, initial-scale=1.0">
+
         <style>
+
             body {
                 font-family: Arial, sans-serif;
                 text-align: center;
@@ -76,7 +86,9 @@ def home():
                 color: green;
                 font-weight: bold;
             }
+
         </style>
+
     </head>
 
     <body>
@@ -98,16 +110,24 @@ def home():
         </div>
 
     </body>
+
     </html>
     """
 
 
 @app.route("/health")
 def health():
+
     return jsonify({
+
         "status": "online",
+
         "bot": "Bot Update Order Palu",
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        "time": datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
     })
 
 
@@ -116,6 +136,7 @@ def health():
 # =========================================================
 
 VALID_ERROR_CODES = [
+
     "KENDALA TEKNIK",
     "KENDALA PELANGGAN",
     "KENDALA SISTEM",
@@ -126,6 +147,7 @@ VALID_ERROR_CODES = [
     "REGISTRASI",
     "BUTUH EXPAND ODP",
     "CANCEL"
+
 ]
 
 
@@ -147,12 +169,15 @@ def check_config():
         missing.append("API_KEY")
 
     if missing:
+
         logger.error(
             "Environment variable belum lengkap: %s",
             ", ".join(missing)
         )
 
         return False
+
+    logger.info("Environment variable lengkap.")
 
     return True
 
@@ -164,25 +189,48 @@ def check_config():
 def call_apps_script(payload):
 
     if not APPS_SCRIPT_URL:
-        raise Exception("APPS_SCRIPT_URL belum diatur.")
+
+        raise Exception(
+            "APPS_SCRIPT_URL belum diatur."
+        )
 
     payload["api_key"] = API_KEY
 
+    logger.info(
+        "Mengirim request ke Google Apps Script: action=%s",
+        payload.get("action")
+    )
+
     response = requests.post(
+
         APPS_SCRIPT_URL,
+
         json=payload,
+
         timeout=30
+
     )
 
     response.raise_for_status()
 
     try:
-        return response.json()
+
+        result = response.json()
+
+        logger.info(
+            "Response Apps Script: %s",
+            result
+        )
+
+        return result
 
     except Exception:
+
         raise Exception(
+
             "Response Apps Script bukan JSON:\n"
             + response.text[:500]
+
         )
 
 
@@ -206,6 +254,7 @@ def parse_update(text):
         key, value = line.split(":", 1)
 
         key = key.strip().upper()
+
         value = value.strip()
 
         if key == "TRACK ID":
@@ -266,8 +315,11 @@ SUB ERROR : Sudah dijadwalkan besok
 """
 
     await update.message.reply_text(
+
         message,
+
         parse_mode="Markdown"
+
     )
 
 
@@ -285,17 +337,25 @@ async def update_order(
         user_message = update.message.text or ""
 
         text = re.sub(
+
             r"^/update(@\w+)?",
+
             "",
+
             user_message,
+
             flags=re.IGNORECASE
+
         ).strip()
 
         data = parse_update(text)
 
         track_id = data.get("track_id")
+
         error_code = data.get("error_code")
+
         sub_error = data.get("sub_error")
+
 
         # =================================================
         # VALIDASI FORMAT
@@ -304,16 +364,25 @@ async def update_order(
         if not track_id or not error_code or not sub_error:
 
             await update.message.reply_text(
+
                 "❌ *Format tidak lengkap.*\n\n"
+
                 "Gunakan:\n\n"
+
                 "/update\n"
+
                 "TRACK ID : XXXXX\n"
+
                 "ERROR CODE : SURVEI\n"
+
                 "SUB ERROR : Keterangan",
+
                 parse_mode="Markdown"
+
             )
 
             return
+
 
         # =================================================
         # VALIDASI ERROR CODE
@@ -322,17 +391,25 @@ async def update_order(
         if error_code not in VALID_ERROR_CODES:
 
             error_list = "\n".join(
+
                 f"• {x}"
+
                 for x in VALID_ERROR_CODES
+
             )
 
             await update.message.reply_text(
+
                 "❌ *ERROR CODE tidak valid.*\n\n"
-                f"{error_list}",
+
+                + error_list,
+
                 parse_mode="Markdown"
+
             )
 
             return
+
 
         # =================================================
         # USER
@@ -346,23 +423,37 @@ async def update_order(
 
         else:
 
-            updated_by = user.full_name or "Unknown User"
+            updated_by = (
+                user.full_name
+                or "Unknown User"
+            )
+
 
         # =================================================
         # PROCESS
         # =================================================
 
         await update.message.reply_text(
+
             "🔎 Sedang mencari TRACK ID..."
+
         )
 
+
         result = call_apps_script({
+
             "action": "update",
+
             "track_id": track_id,
+
             "error_code": error_code,
+
             "sub_error": sub_error,
+
             "user": updated_by
+
         })
+
 
         # =================================================
         # RESULT
@@ -371,64 +462,111 @@ async def update_order(
         if not result.get("ok"):
 
             error_message = result.get(
+
                 "error",
+
                 "Terjadi kesalahan."
+
             )
 
             await update.message.reply_text(
+
                 "❌ *Update gagal!*\n\n"
-                f"{error_message}",
+
+                + error_message,
+
                 parse_mode="Markdown"
+
             )
 
             return
 
+
         now = datetime.now().strftime(
+
             "%d-%m-%Y %H:%M:%S"
+
         )
 
+
         success_message = f"""
+
 ✅ *UPDATE BERHASIL!*
 
 📦 *TRACK ID*
+
 `{track_id}`
 
 🔄 *Error Code*
+
 *{error_code}*
 
 📝 *Sub Error*
+
 {escape_markdown(sub_error)}
 
 👤 *Oleh*
+
 {escape_markdown(updated_by)}
 
 🕒 {now}
+
 """
 
+
         await update.message.reply_text(
+
             success_message,
+
             parse_mode="Markdown"
+
         )
+
 
     except requests.exceptions.Timeout:
 
-        logger.exception("Timeout Apps Script")
-
-        await update.message.reply_text(
-            "❌ Google Sheet terlalu lama merespons.\n\n"
-            "Silakan coba kembali beberapa saat lagi."
+        logger.exception(
+            "Timeout Apps Script"
         )
 
-    except Exception as e:
+        await update.message.reply_text(
+
+            "❌ Google Sheet terlalu lama merespons.\n\n"
+
+            "Silakan coba kembali beberapa saat lagi."
+
+        )
+
+
+    except requests.exceptions.RequestException as e:
+
+        logger.exception(
+            "Request Apps Script gagal"
+        )
+
+        await update.message.reply_text(
+
+            "❌ Gagal terhubung ke Google Sheet.\n\n"
+
+            "Silakan coba kembali."
+
+        )
+
+
+    except Exception:
 
         logger.exception(
             "Error update order"
         )
 
         await update.message.reply_text(
+
             "❌ *Terjadi error pada bot.*\n\n"
+
             "Silakan hubungi PIC bot.",
+
             parse_mode="Markdown"
+
         )
 
 
@@ -444,70 +582,111 @@ async def cek_perform(
     try:
 
         await update.message.reply_text(
+
             "📊 Sedang mengambil data performa..."
+
         )
 
+
         result = call_apps_script({
+
             "action": "stats"
+
         })
+
 
         if not result.get("ok"):
 
             await update.message.reply_text(
+
                 "❌ Gagal mengambil data performa.\n\n"
+
                 + result.get(
+
                     "error",
+
                     "Unknown error"
+
                 )
+
             )
 
             return
 
-        total = result.get("total", 0)
 
-        stats = result.get(
-            "stats",
-            {}
+        total = result.get(
+
+            "total",
+
+            0
+
         )
 
+
+        stats = result.get(
+
+            "stats",
+
+            {}
+
+        )
+
+
         message = f"""
+
 📊 *DASHBOARD PERFORMA*
 
 📦 Total Order: *{total}*
 
 """
 
+
         if stats:
 
             sorted_stats = sorted(
+
                 stats.items(),
+
                 key=lambda x: x[1],
+
                 reverse=True
+
             )
 
             for status, count in sorted_stats:
 
                 message += (
+
                     f"• {status}: *{count}*\n"
+
                 )
 
         else:
 
             message += "Belum ada data."
 
+
         await update.message.reply_text(
+
             message,
+
             parse_mode="Markdown"
+
         )
 
-    except Exception as e:
+
+    except Exception:
 
         logger.exception(
+
             "Error cek perform"
+
         )
 
         await update.message.reply_text(
+
             "❌ Gagal mengambil data performa."
+
         )
 
 
@@ -523,40 +702,62 @@ async def ranking(
     try:
 
         await update.message.reply_text(
+
             "🏆 Sedang menghitung ranking..."
+
         )
 
+
         result = call_apps_script({
+
             "action": "ranking"
+
         })
+
 
         if not result.get("ok"):
 
             await update.message.reply_text(
+
                 "❌ Gagal mengambil ranking.\n\n"
+
                 + result.get(
+
                     "error",
+
                     "Unknown error"
+
                 )
+
             )
 
             return
 
+
         ranking_data = result.get(
+
             "ranking",
+
             []
+
         )
 
+
         message = """
+
 🏆 *RANKING PS TEKNISI*
 
 """
 
+
         medals = [
+
             "🥇",
             "🥈",
             "🥉"
+
         ]
+
 
         if not ranking_data:
 
@@ -565,19 +766,30 @@ async def ranking(
         else:
 
             for index, item in enumerate(
+
                 ranking_data,
+
                 start=1
+
             ):
 
                 team = item.get(
+
                     "team",
+
                     "-"
+
                 )
 
+
                 total = item.get(
+
                     "total",
+
                     0
+
                 )
+
 
                 if index <= 3:
 
@@ -587,24 +799,39 @@ async def ranking(
 
                     icon = f"{index}."
 
+
                 message += (
-                    f"{icon} *{escape_markdown(str(team))}* "
+
+                    f"{icon} "
+
+                    f"*{escape_markdown(str(team))}* "
+
                     f"— *{total} PS*\n"
+
                 )
 
+
         await update.message.reply_text(
+
             message,
+
             parse_mode="Markdown"
+
         )
 
-    except Exception as e:
+
+    except Exception:
 
         logger.exception(
+
             "Error ranking"
+
         )
 
         await update.message.reply_text(
+
             "❌ Gagal menghitung ranking."
+
         )
 
 
@@ -615,11 +842,13 @@ async def ranking(
 def escape_markdown(text):
 
     if text is None:
+
         return ""
 
     text = str(text)
 
     characters = [
+
         "_",
         "*",
         "[",
@@ -638,13 +867,17 @@ def escape_markdown(text):
         "}",
         ".",
         "!"
+
     ]
 
     for char in characters:
 
         text = text.replace(
+
             char,
+
             "\\" + char
+
         )
 
     return text
@@ -662,39 +895,95 @@ def run_bot():
             "Memulai Telegram Bot..."
         )
 
+
+        # =================================================
+        # FIX ASYNCIO UNTUK BACKGROUND THREAD
+        # =================================================
+
+        loop = asyncio.new_event_loop()
+
+        asyncio.set_event_loop(loop)
+
+
+        logger.info(
+            "Asyncio event loop berhasil dibuat."
+        )
+
+
+        # =================================================
+        # BUILD APPLICATION
+        # =================================================
+
         application = (
+
             ApplicationBuilder()
+
             .token(BOT_TOKEN)
+
             .build()
+
         )
 
+
+        # =================================================
+        # HANDLERS
+        # =================================================
+
         application.add_handler(
+
             CommandHandler(
+
                 "start",
+
                 start
+
             )
+
         )
 
+
         application.add_handler(
+
             CommandHandler(
+
                 "update",
+
                 update_order
+
             )
+
         )
 
+
         application.add_handler(
+
             CommandHandler(
+
                 "cekperform",
+
                 cek_perform
+
             )
+
         )
 
+
         application.add_handler(
+
             CommandHandler(
+
                 "ranking",
+
                 ranking
+
             )
+
         )
+
+
+        # =================================================
+        # BOT READY
+        # =================================================
 
         logger.info(
             "======================================"
@@ -708,14 +997,26 @@ def run_bot():
             "======================================"
         )
 
+
+        # =================================================
+        # START POLLING
+        # =================================================
+
         application.run_polling(
-            drop_pending_updates=True
+
+            drop_pending_updates=True,
+
+            stop_signals=None
+
         )
+
 
     except Exception:
 
         logger.exception(
+
             "Telegram Bot berhenti karena error."
+
         )
 
 
@@ -728,34 +1029,51 @@ def main():
     if not check_config():
 
         logger.error(
+
             "Bot tidak dapat dijalankan."
+
         )
 
         return
 
-    # -----------------------------------------------
-    # Telegram bot berjalan di background
-    # -----------------------------------------------
+
+    # =====================================================
+    # TELEGRAM BOT THREAD
+    # =====================================================
 
     bot_thread = threading.Thread(
+
         target=run_bot,
+
+        name="telegram-bot",
+
         daemon=True
+
     )
+
 
     bot_thread.start()
 
-    # -----------------------------------------------
-    # Flask web server
-    # -----------------------------------------------
+
+    # =====================================================
+    # FLASK WEB SERVER
+    # =====================================================
 
     logger.info(
+
         "Web server berjalan pada port %s",
+
         PORT
+
     )
 
+
     app.run(
+
         host="0.0.0.0",
+
         port=PORT
+
     )
 
 
@@ -764,4 +1082,5 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
+
     main()
