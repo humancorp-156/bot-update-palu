@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 import time
+import html
 import requests
 
 from datetime import datetime
@@ -31,7 +32,7 @@ PORT = int(os.getenv("PORT", "10000"))
 
 APPS_SCRIPT_TIMEOUT = 45
 
-BOT_VERSION = "16.0"
+BOT_VERSION = "17.0"
 
 
 # =========================================================
@@ -98,44 +99,15 @@ VALID_ERROR_CODES = [
 
 
 # =========================================================
-# MARKDOWN ESCAPE
+# HTML ESCAPE
 # =========================================================
 
-def escape_markdown(text):
+def escape_html(text):
 
     if text is None:
         return ""
 
-    text = str(text)
-
-    characters = [
-        "_",
-        "*",
-        "[",
-        "]",
-        "(",
-        ")",
-        "~",
-        "`",
-        ">",
-        "#",
-        "+",
-        "-",
-        "=",
-        "|",
-        "{",
-        "}",
-        ".",
-        "!",
-    ]
-
-    for char in characters:
-        text = text.replace(
-            char,
-            "\\" + char
-        )
-
-    return text
+    return html.escape(str(text))
 
 
 # =========================================================
@@ -232,10 +204,12 @@ async def telegram_error_handler(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
+    error = context.error
+
     logger.error(
         "TELEGRAM HANDLER ERROR | %s",
-        context.error,
-        exc_info=context.error,
+        error,
+        exc_info=error,
     )
 
 
@@ -352,7 +326,6 @@ def parse_update(text):
         )
 
         key = key.strip().upper()
-
         value = value.strip()
 
         if key == "TRACK ID":
@@ -361,9 +334,7 @@ def parse_update(text):
 
         elif key == "ERROR CODE":
 
-            result["error_code"] = (
-                value.upper()
-            )
+            result["error_code"] = value.upper()
 
         elif key in (
             "SUB ERROR",
@@ -385,23 +356,26 @@ async def start(
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
+    if not update.message:
+        return
+
     message = """
-👋 *BOT UPDATE ORDER*
-*Service Area Palu*
+👋 <b>BOT UPDATE ORDER</b>
+<b>Service Area Palu</b>
 
-📌 *Cara menggunakan:*
+📌 <b>Cara menggunakan:</b>
 
-/update
+<code>/update
 Track Id : SC1002373501
 Error Code : SURVEI
-Sub Error : Keterangan bebas
+Sub Error : Keterangan bebas</code>
 
-📊 *Command:*
+📊 <b>Command:</b>
 
 /cekperform
 /ranking
 
-📋 *Error Code valid:*
+📋 <b>Error Code valid:</b>
 
 • KENDALA TEKNIK
 • KENDALA PELANGGAN
@@ -417,7 +391,7 @@ Sub Error : Keterangan bebas
 
     await update.message.reply_text(
         message,
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
     logger.info(
@@ -470,9 +444,7 @@ async def update_order(
             flags=re.IGNORECASE,
         ).strip()
 
-        data = parse_update(
-            text
-        )
+        data = parse_update(text)
 
         track_id = data.get(
             "track_id"
@@ -487,7 +459,7 @@ async def update_order(
         )
 
         # -----------------------------------------------------
-        # VALIDASI
+        # VALIDASI FORMAT
         # -----------------------------------------------------
 
         if (
@@ -502,26 +474,23 @@ async def update_order(
             )
 
             await update.message.reply_text(
+                """
+❌ <b>Format tidak lengkap.</b>
 
-                "❌ *Format tidak lengkap.*\n\n"
+Gunakan:
 
-                "Gunakan:\n\n"
-
-                "/update\n"
-
-                "Track Id : XXXXX\n"
-
-                "Error Code : SURVEI\n"
-
-                "Sub Error : Keterangan",
-
-                parse_mode="Markdown",
+<code>/update
+Track Id : XXXXX
+Error Code : SURVEI
+Sub Error : Keterangan</code>
+""",
+                parse_mode="HTML",
             )
 
             return
 
         # -----------------------------------------------------
-        # ERROR CODE
+        # VALIDASI ERROR CODE
         # -----------------------------------------------------
 
         if error_code not in VALID_ERROR_CODES:
@@ -532,16 +501,14 @@ async def update_order(
             )
 
             error_list = "\n".join(
-                f"• {x}"
+                f"• {escape_html(x)}"
                 for x in VALID_ERROR_CODES
             )
 
             await update.message.reply_text(
-
-                "❌ *ERROR CODE tidak valid.*\n\n"
+                "❌ <b>ERROR CODE tidak valid.</b>\n\n"
                 + error_list,
-
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
 
             return
@@ -582,7 +549,7 @@ async def update_order(
         )
 
         # -----------------------------------------------------
-        # FEEDBACK 1
+        # FEEDBACK
         # -----------------------------------------------------
 
         await update.message.reply_text(
@@ -620,14 +587,9 @@ async def update_order(
 
         if not success:
 
-            error_message = (
-                "Update gagal."
-            )
+            error_message = "Update gagal."
 
-            if isinstance(
-                result,
-                dict
-            ):
+            if isinstance(result, dict):
 
                 error_message = (
                     result.get("message")
@@ -636,13 +598,9 @@ async def update_order(
                 )
 
             await update.message.reply_text(
-
-                "❌ *UPDATE GAGAL!*\n\n"
-                + escape_markdown(
-                    error_message
-                ),
-
-                parse_mode="Markdown",
+                "❌ <b>UPDATE GAGAL!</b>\n\n"
+                + escape_html(error_message),
+                parse_mode="HTML",
             )
 
             return
@@ -651,51 +609,52 @@ async def update_order(
         # SUCCESS
         # -----------------------------------------------------
 
-        row = (
-            result.get("row", "-")
-            if isinstance(result, dict)
-            else "-"
-        )
+        if isinstance(result, dict):
 
-        processing_ms = (
-            result.get(
+            row = result.get(
+                "row",
+                "-"
+            )
+
+            processing_ms = result.get(
                 "processing_ms",
                 "-"
             )
-            if isinstance(result, dict)
-            else "-"
-        )
+
+        else:
+
+            row = "-"
+            processing_ms = "-"
 
         now = datetime.now().strftime(
             "%d-%m-%Y %H:%M:%S"
         )
 
         message = (
+            "✅ <b>UPDATE BERHASIL!</b>\n\n"
 
-            "✅ *UPDATE BERHASIL!*\n\n"
+            f"📦 <b>TRACK ID</b>\n"
+            f"<code>{escape_html(track_id)}</code>\n\n"
 
-            f"📦 *TRACK ID*\n"
-            f"`{escape_markdown(track_id)}`\n\n"
+            f"🔄 <b>Error Code</b>\n"
+            f"<b>{escape_html(error_code)}</b>\n\n"
 
-            f"🔄 *Error Code*\n"
-            f"*{escape_markdown(error_code)}*\n\n"
+            f"📝 <b>Sub Error</b>\n"
+            f"{escape_html(sub_error)}\n\n"
 
-            f"📝 *Sub Error*\n"
-            f"{escape_markdown(sub_error)}\n\n"
+            f"👤 <b>Oleh</b>\n"
+            f"{escape_html(updated_by)}\n\n"
 
-            f"👤 *Oleh*\n"
-            f"{escape_markdown(updated_by)}\n\n"
-
-            f"📍 *Row:* {row}\n"
+            f"📍 <b>Row:</b> {escape_html(row)}\n"
 
             f"🕒 {now}\n"
 
-            f"⚡ Proses: *{processing_ms} ms*"
+            f"⚡ Proses: <b>{escape_html(processing_ms)} ms</b>"
         )
 
         await update.message.reply_text(
             message,
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
         logger.info(
@@ -715,11 +674,12 @@ async def update_order(
         try:
 
             await update.message.reply_text(
+                """
+❌ <b>Google Sheet terlalu lama merespons.</b>
 
-                "❌ *Google Sheet terlalu lama merespons.*\n\n"
-                "Silakan coba kembali.",
-
-                parse_mode="Markdown",
+Silakan coba kembali.
+""",
+                parse_mode="HTML",
             )
 
         except Exception:
@@ -738,10 +698,8 @@ async def update_order(
         try:
 
             await update.message.reply_text(
-
-                "❌ *Gagal terhubung ke Google Sheet.*",
-
-                parse_mode="Markdown",
+                "❌ <b>Gagal terhubung ke Google Sheet.</b>",
+                parse_mode="HTML",
             )
 
         except Exception:
@@ -759,13 +717,9 @@ async def update_order(
         try:
 
             await update.message.reply_text(
-
-                "❌ *Terjadi error pada bot.*\n\n"
-                + escape_markdown(
-                    str(e)
-                ),
-
-                parse_mode="Markdown",
+                "❌ <b>Terjadi error pada bot.</b>\n\n"
+                + escape_html(str(e)),
+                parse_mode="HTML",
             )
 
         except Exception:
@@ -786,6 +740,9 @@ async def cek_perform(
 
     try:
 
+        if not update.message:
+            return
+
         await update.message.reply_text(
             "📊 Sedang mengambil data performa..."
         )
@@ -803,13 +760,17 @@ async def cek_perform(
         ):
 
             message = (
-                result.get("message", "Gagal.")
+                result.get(
+                    "message",
+                    "Gagal."
+                )
                 if isinstance(result, dict)
                 else "Gagal."
             )
 
             await update.message.reply_text(
-                "❌ " + str(message)
+                "❌ " + escape_html(message),
+                parse_mode="HTML",
             )
 
             return
@@ -823,22 +784,28 @@ async def cek_perform(
         )
 
         await update.message.reply_text(
-
-            "📊 *DASHBOARD PERFORMA*\n\n"
-            f"📦 Total Order: *{total}*",
-
-            parse_mode="Markdown",
+            "📊 <b>DASHBOARD PERFORMA</b>\n\n"
+            f"📦 Total Order: <b>{escape_html(total)}</b>",
+            parse_mode="HTML",
         )
 
-    except Exception as e:
+    except Exception:
 
         logger.exception(
             "CEKPERFORM ERROR"
         )
 
-        await update.message.reply_text(
-            "❌ Gagal mengambil data performa."
-        )
+        try:
+
+            await update.message.reply_text(
+                "❌ Gagal mengambil data performa."
+            )
+
+        except Exception:
+
+            logger.exception(
+                "FAILED SEND CEKPERFORM ERROR"
+            )
 
 
 # =========================================================
@@ -851,6 +818,9 @@ async def ranking(
 ):
 
     try:
+
+        if not update.message:
+            return
 
         await update.message.reply_text(
             "🏆 Sedang menghitung ranking..."
@@ -869,13 +839,17 @@ async def ranking(
         ):
 
             message = (
-                result.get("message", "Gagal.")
+                result.get(
+                    "message",
+                    "Gagal."
+                )
                 if isinstance(result, dict)
                 else "Gagal."
             )
 
             await update.message.reply_text(
-                "❌ " + str(message)
+                "❌ " + escape_html(message),
+                parse_mode="HTML",
             )
 
             return
@@ -886,7 +860,7 @@ async def ranking(
         )
 
         message = (
-            "🏆 *RANKING PS TEKNISI*\n\n"
+            "🏆 <b>RANKING PS TEKNISI</b>\n\n"
         )
 
         medals = [
@@ -907,6 +881,9 @@ async def ranking(
                 ranking_data,
                 start=1,
             ):
+
+                if not isinstance(item, dict):
+                    continue
 
                 team = item.get(
                     "team",
@@ -929,15 +906,14 @@ async def ranking(
                     icon = f"{index}."
 
                 message += (
-
                     f"{icon} "
-                    f"*{escape_markdown(str(team))}* "
-                    f"— *{total} PS*\n"
+                    f"<b>{escape_html(team)}</b> "
+                    f"— <b>{escape_html(total)} PS</b>\n"
                 )
 
         await update.message.reply_text(
             message,
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
     except Exception:
@@ -946,9 +922,17 @@ async def ranking(
             "RANKING ERROR"
         )
 
-        await update.message.reply_text(
-            "❌ Gagal menghitung ranking."
-        )
+        try:
+
+            await update.message.reply_text(
+                "❌ Gagal menghitung ranking."
+            )
+
+        except Exception:
+
+            logger.exception(
+                "FAILED SEND RANKING ERROR"
+            )
 
 
 # =========================================================
@@ -996,30 +980,21 @@ def run_telegram_bot():
             "========================================"
         )
 
+        application = None
+
         try:
 
             # -------------------------------------------------
             # BUILD APPLICATION
+            #
+            # Sengaja dibuat sederhana agar kompatibel
+            # dengan berbagai versi python-telegram-bot.
             # -------------------------------------------------
 
             application = (
-
                 ApplicationBuilder()
-
                 .token(BOT_TOKEN)
-
                 .concurrent_updates(True)
-
-                .get_updates_timeout(30)
-
-                .get_updates_connect_timeout(30)
-
-                .get_updates_read_timeout(40)
-
-                .get_updates_write_timeout(40)
-
-                .poll_interval(1)
-
                 .build()
             )
 
@@ -1056,16 +1031,14 @@ def run_telegram_bot():
             )
 
             # -------------------------------------------------
-            # DEBUG ALL MESSAGE
+            # DEBUG ALL INCOMING MESSAGE
             # -------------------------------------------------
 
             application.add_handler(
-
                 MessageHandler(
                     filters.ALL,
                     debug_message,
                 ),
-
                 group=99,
             )
 
@@ -1078,30 +1051,20 @@ def run_telegram_bot():
             )
 
             # -------------------------------------------------
-            # VERIFY TELEGRAM CONNECTION
+            # START POLLING
+            #
+            # Tidak menggunakan:
+            # get_updates_timeout()
+            # get_updates_connect_timeout()
+            # get_updates_read_timeout()
+            # get_updates_write_timeout()
+            #
+            # supaya tidak terkena perbedaan API versi library.
             # -------------------------------------------------
-
-            logger.info(
-                "Memeriksa koneksi Telegram..."
-            )
-
-            me = application.bot.get_me()
-
-            logger.info(
-                "TELEGRAM BOT CONNECTED | username=@%s | id=%s",
-                me.username,
-                me.id,
-            )
 
             logger.info(
                 "BOT READY — MULAI POLLING TELEGRAM"
             )
-
-            # -------------------------------------------------
-            # POLLING
-            #
-            # INI SEKARANG PROSES UTAMA TELEGRAM
-            # -------------------------------------------------
 
             application.run_polling(
                 drop_pending_updates=False,
@@ -1170,10 +1133,7 @@ def main():
         raise SystemExit(1)
 
     # -----------------------------------------------------
-    # START FLASK AS BACKGROUND THREAD
-    #
-    # Flask hanya untuk health check Render.
-    # Telegram tetap proses utama.
+    # FLASK AS BACKGROUND THREAD
     # -----------------------------------------------------
 
     flask_thread = threading.Thread(
@@ -1196,7 +1156,7 @@ def main():
 
 
 # =========================================================
-# START
+# START APPLICATION
 # =========================================================
 
 if __name__ == "__main__":
