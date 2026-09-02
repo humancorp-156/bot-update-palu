@@ -1,3 +1,4 @@
+```python
 import os
 import re
 import asyncio
@@ -25,6 +26,9 @@ APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")
 API_KEY = os.getenv("API_KEY")
 
 PORT = int(os.getenv("PORT", "10000"))
+
+# Timeout Google Apps Script
+APPS_SCRIPT_TIMEOUT = 60
 
 
 # =========================================================
@@ -194,6 +198,8 @@ def call_apps_script(payload):
             "APPS_SCRIPT_URL belum diatur."
         )
 
+    payload = payload.copy()
+
     payload["api_key"] = API_KEY
 
     logger.info(
@@ -201,21 +207,45 @@ def call_apps_script(payload):
         payload.get("action")
     )
 
-    response = requests.post(
-
-        APPS_SCRIPT_URL,
-
-        json=payload,
-
-        timeout=30
-
-    )
-
-    response.raise_for_status()
+    start_time = datetime.now()
 
     try:
 
-        result = response.json()
+        response = requests.post(
+
+            APPS_SCRIPT_URL,
+
+            json=payload,
+
+            timeout=APPS_SCRIPT_TIMEOUT
+
+        )
+
+        elapsed = (
+            datetime.now() - start_time
+        ).total_seconds()
+
+        logger.info(
+            "Response Apps Script diterima dalam %.2f detik",
+            elapsed
+        )
+
+        response.raise_for_status()
+
+        try:
+
+            result = response.json()
+
+        except Exception:
+
+            logger.error(
+                "Response bukan JSON: %s",
+                response.text[:500]
+            )
+
+            raise Exception(
+                "Response Google Apps Script bukan JSON."
+            )
 
         logger.info(
             "Response Apps Script: %s",
@@ -224,14 +254,27 @@ def call_apps_script(payload):
 
         return result
 
-    except Exception:
+    except requests.exceptions.Timeout:
 
-        raise Exception(
+        elapsed = (
+            datetime.now() - start_time
+        ).total_seconds()
 
-            "Response Apps Script bukan JSON:\n"
-            + response.text[:500]
-
+        logger.error(
+            "Timeout Apps Script setelah %.2f detik",
+            elapsed
         )
+
+        raise
+
+    except requests.exceptions.RequestException as e:
+
+        logger.exception(
+            "Request Apps Script gagal: %s",
+            e
+        )
+
+        raise
 
 
 # =========================================================
@@ -440,6 +483,14 @@ async def update_order(
         )
 
 
+        logger.info(
+            "UPDATE START | TRACK ID=%s | ERROR=%s | USER=%s",
+            track_id,
+            error_code,
+            updated_by
+        )
+
+
         result = call_apps_script({
 
             "action": "update",
@@ -459,21 +510,36 @@ async def update_order(
         # RESULT
         # =================================================
 
-        if not result.get("ok"):
+        # PENTING:
+        # Apps Script Version 9 menggunakan "success",
+        # bukan "ok".
+
+        if not result.get("success", False):
 
             error_message = result.get(
 
-                "error",
+                "message",
 
-                "Terjadi kesalahan."
+                result.get(
+                    "error",
+                    "Terjadi kesalahan pada Google Sheet."
+                )
 
+            )
+
+            logger.error(
+                "UPDATE GAGAL | TRACK ID=%s | ERROR=%s",
+                track_id,
+                error_message
             )
 
             await update.message.reply_text(
 
                 "❌ *Update gagal!*\n\n"
 
-                + error_message,
+                + escape_markdown(
+                    str(error_message)
+                ),
 
                 parse_mode="Markdown"
 
@@ -482,10 +548,20 @@ async def update_order(
             return
 
 
+        # =================================================
+        # SUCCESS
+        # =================================================
+
         now = datetime.now().strftime(
 
             "%d-%m-%Y %H:%M:%S"
 
+        )
+
+
+        processing_ms = result.get(
+            "processing_ms",
+            "-"
         )
 
 
@@ -499,7 +575,7 @@ async def update_order(
 
 🔄 *Error Code*
 
-*{error_code}*
+*{escape_markdown(error_code)}*
 
 📝 *Sub Error*
 
@@ -511,6 +587,7 @@ async def update_order(
 
 🕒 {now}
 
+⚡ Proses: *{processing_ms} ms*
 """
 
 
@@ -523,6 +600,13 @@ async def update_order(
         )
 
 
+        logger.info(
+            "UPDATE BERHASIL | TRACK ID=%s | processing_ms=%s",
+            track_id,
+            processing_ms
+        )
+
+
     except requests.exceptions.Timeout:
 
         logger.exception(
@@ -531,9 +615,11 @@ async def update_order(
 
         await update.message.reply_text(
 
-            "❌ Google Sheet terlalu lama merespons.\n\n"
+            "❌ *Google Sheet terlalu lama merespons.*\n\n"
 
-            "Silakan coba kembali beberapa saat lagi."
+            "Silakan coba kembali beberapa saat lagi.",
+
+            parse_mode="Markdown"
 
         )
 
@@ -546,14 +632,18 @@ async def update_order(
 
         await update.message.reply_text(
 
-            "❌ Gagal terhubung ke Google Sheet.\n\n"
+            "❌ *Gagal terhubung ke Google Sheet.*\n\n"
 
-            "Silakan coba kembali."
+            + escape_markdown(
+                str(e)
+            ),
+
+            parse_mode="Markdown"
 
         )
 
 
-    except Exception:
+    except Exception as e:
 
         logger.exception(
             "Error update order"
@@ -563,7 +653,9 @@ async def update_order(
 
             "❌ *Terjadi error pada bot.*\n\n"
 
-            "Silakan hubungi PIC bot.",
+            + escape_markdown(
+                str(e)
+            ),
 
             parse_mode="Markdown"
 
@@ -595,19 +687,29 @@ async def cek_perform(
         })
 
 
-        if not result.get("ok"):
+        # Apps Script menggunakan "success"
+        if not result.get("success", False):
+
+            error_message = result.get(
+
+                "message",
+
+                result.get(
+                    "error",
+                    "Unknown error"
+                )
+
+            )
 
             await update.message.reply_text(
 
                 "❌ Gagal mengambil data performa.\n\n"
 
-                + result.get(
+                + escape_markdown(
+                    str(error_message)
+                ),
 
-                    "error",
-
-                    "Unknown error"
-
-                )
+                parse_mode="Markdown"
 
             )
 
@@ -657,7 +759,9 @@ async def cek_perform(
 
                 message += (
 
-                    f"• {status}: *{count}*\n"
+                    f"• "
+                    f"{escape_markdown(str(status))}: "
+                    f"*{count}*\n"
 
                 )
 
@@ -675,17 +779,22 @@ async def cek_perform(
         )
 
 
-    except Exception:
+    except Exception as e:
 
         logger.exception(
 
             "Error cek perform"
-
         )
 
         await update.message.reply_text(
 
-            "❌ Gagal mengambil data performa."
+            "❌ Gagal mengambil data performa.\n\n"
+
+            + escape_markdown(
+                str(e)
+            ),
+
+            parse_mode="Markdown"
 
         )
 
@@ -715,19 +824,29 @@ async def ranking(
         })
 
 
-        if not result.get("ok"):
+        # Apps Script menggunakan "success"
+        if not result.get("success", False):
+
+            error_message = result.get(
+
+                "message",
+
+                result.get(
+                    "error",
+                    "Unknown error"
+                )
+
+            )
 
             await update.message.reply_text(
 
                 "❌ Gagal mengambil ranking.\n\n"
 
-                + result.get(
+                + escape_markdown(
+                    str(error_message)
+                ),
 
-                    "error",
-
-                    "Unknown error"
-
-                )
+                parse_mode="Markdown"
 
             )
 
@@ -820,7 +939,7 @@ async def ranking(
         )
 
 
-    except Exception:
+    except Exception as e:
 
         logger.exception(
 
@@ -830,7 +949,13 @@ async def ranking(
 
         await update.message.reply_text(
 
-            "❌ Gagal menghitung ranking."
+            "❌ Gagal menghitung ranking.\n\n"
+
+            + escape_markdown(
+                str(e)
+            ),
+
+            parse_mode="Markdown"
 
         )
 
@@ -1084,3 +1209,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+```
