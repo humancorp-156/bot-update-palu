@@ -32,7 +32,7 @@ PORT = int(os.getenv("PORT", "10000"))
 
 APPS_SCRIPT_TIMEOUT = 45
 
-BOT_VERSION = "21.0"
+BOT_VERSION = "22.0"
 
 INSTANCE_ID = (
     os.getenv("RENDER_SERVICE_ID")
@@ -62,7 +62,6 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-
     return jsonify({
         "status": "online",
         "bot": "BOT UPDATE ORDER PALU",
@@ -74,7 +73,6 @@ def home():
 
 @app.route("/health")
 def health():
-
     return jsonify({
         "status": "online",
         "bot": "BOT UPDATE ORDER PALU",
@@ -426,7 +424,6 @@ def parse_update(text):
         )
 
         key = key.strip().upper()
-
         value = value.strip()
 
         if key == "TRACK ID":
@@ -559,15 +556,18 @@ async def update_order(update, context):
         user = update.effective_user
 
         if user and user.username:
+
             updated_by = f"@{user.username}"
 
         elif user:
+
             updated_by = (
                 user.full_name
                 or str(user.id)
             )
 
         else:
+
             updated_by = "Unknown User"
 
         await update.message.reply_text(
@@ -605,16 +605,32 @@ async def update_order(update, context):
 
             return
 
-        row = result.get("row", "-")
+        row = result.get(
+            "row",
+            "-"
+        )
 
         processing_ms = result.get(
             "processing_ms",
             "-"
         )
 
-        new_keterangan = result.get(
-            "new_keterangan",
-            keterangan or "-"
+        # ====================================================
+        # KETERANGAN
+        #
+        # Prioritas:
+        # 1. new_keterangan dari Apps Script
+        # 2. keterangan dari Apps Script
+        # 3. sub_error dari Telegram
+        # 4. keterangan input Telegram
+        # ====================================================
+
+        new_keterangan = (
+            result.get("new_keterangan")
+            or result.get("keterangan")
+            or sub_error
+            or keterangan
+            or "-"
         )
 
         now = datetime.now().strftime(
@@ -651,8 +667,9 @@ async def update_order(update, context):
         )
 
         logger.info(
-            "UPDATE SUCCESS | TRACK=%s",
-            track_id
+            "UPDATE SUCCESS | TRACK=%s | KETERANGAN=%s",
+            track_id,
+            new_keterangan
         )
 
     except Exception as e:
@@ -775,7 +792,7 @@ async def cek_perform(update, context):
             return
 
         # ====================================================
-        # FORMAT TOTAL
+        # REPORT DATE
         # ====================================================
 
         report_date = result.get(
@@ -785,8 +802,10 @@ async def cek_perform(update, context):
 
         total = result.get("total")
 
-        # Jika Apps Script hanya mengirim angka:
-        # {"total":80469}
+        # ====================================================
+        # FORMAT MINIMAL
+        # ====================================================
+
         if isinstance(total, (int, float, str)):
 
             message = (
@@ -797,12 +816,8 @@ async def cek_perform(update, context):
                 f"📦 <b>TOTAL ORDER : "
                 f"{safe_number(total)}</b>\n\n"
 
-                f"⚠️ <b>Data breakdown belum dikirim "
-                f"oleh Google Apps Script.</b>\n\n"
-
-                f"Apps Script harus mengirim "
-                f"jumlah survey, PS, kendala, "
-                f"STO dan tipe order."
+                f"⚠️ <b>Data breakdown belum tersedia "
+                f"dari Google Apps Script.</b>"
             )
 
             await update.message.reply_text(
@@ -849,7 +864,6 @@ async def cek_perform(update, context):
 
             f"📊 <b>REPORT PROGRES — "
             f"{safe_text(report_date)}</b>\n"
-
             f"<i>(Total seluruh STO)</i>\n\n"
 
             f"<b>📌 TOTAL</b>\n\n"
@@ -1076,32 +1090,10 @@ def run_flask():
 
 
 # ============================================================
-# TELEGRAM BOT
+# BUILD TELEGRAM APPLICATION
 # ============================================================
 
-def run_telegram_bot():
-
-    logger.info(
-        "========================================"
-    )
-
-    logger.info(
-        "TELEGRAM BOT START"
-    )
-
-    logger.info(
-        "VERSION = %s",
-        BOT_VERSION
-    )
-
-    logger.info(
-        "INSTANCE = %s",
-        INSTANCE_ID
-    )
-
-    logger.info(
-        "========================================"
-    )
+def build_telegram_application():
 
     application = (
         ApplicationBuilder()
@@ -1150,14 +1142,79 @@ def run_telegram_bot():
         telegram_error_handler
     )
 
+    return application
+
+
+# ============================================================
+# TELEGRAM BOT
+# ============================================================
+
+def run_telegram_bot():
+
     logger.info(
-        "BOT READY — MULAI POLLING TELEGRAM"
+        "========================================"
     )
 
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True
+    logger.info(
+        "TELEGRAM BOT START"
     )
+
+    logger.info(
+        "VERSION = %s",
+        BOT_VERSION
+    )
+
+    logger.info(
+        "INSTANCE = %s",
+        INSTANCE_ID
+    )
+
+    logger.info(
+        "========================================"
+    )
+
+    restart_count = 0
+
+    while True:
+
+        try:
+
+            restart_count += 1
+
+            logger.info(
+                "TELEGRAM POLLING START | ATTEMPT=%s",
+                restart_count
+            )
+
+            application = build_telegram_application()
+
+            logger.info(
+                "BOT READY — MULAI POLLING TELEGRAM"
+            )
+
+            application.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                stop_signals=None
+            )
+
+            logger.warning(
+                "TELEGRAM POLLING BERHENTI TANPA EXCEPTION."
+            )
+
+        except Exception:
+
+            logger.exception(
+                "TELEGRAM POLLING CRASH"
+            )
+
+        finally:
+
+            logger.warning(
+                "TELEGRAM BOT AKAN RESTART DALAM 5 DETIK..."
+            )
+
+            time.sleep(5)
 
 
 # ============================================================
